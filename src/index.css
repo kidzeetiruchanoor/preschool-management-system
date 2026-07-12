@@ -1,0 +1,10 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Plus Jakarta Sans', sans-serif; background: #FDF8F2; color: #1C2B2D; }
+button { cursor: pointer; font-family: inherit; }
+input, select, textarea { font-family: inherit; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-thumb { background: #E2DDD6; border-radius: 3px; }
+@media print {
+  .no-print { display: none !important; }
+  .print-area { box-shadow: none !important; border: none !important; }
+}
