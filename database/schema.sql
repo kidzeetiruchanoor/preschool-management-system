@@ -492,3 +492,39 @@ GROUP BY TO_CHAR(expense_date, 'YYYY-MM');
 INSERT INTO academic_years (label, start_date, end_date, is_current)
 VALUES ('2026-27', '2026-05-01', '2027-04-30', TRUE);
 
+
+-- ================================================================
+-- KIDZEE TIRUCHANOOR — Tighten RLS to authenticated users only
+-- Run this in Supabase SQL Editor after adding login to the app
+-- ================================================================
+
+-- Drop the temporary anon policies created during Phase 1
+DO $$
+DECLARE
+  t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'students','student_enrollments','staff','enquiries',
+    'fee_payments','salary_payments','expenses','attendance',
+    'documents','academic_years','classes',
+    'admission_counters','roll_counters'
+  ]
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS "anon_full_access" ON %I', t);
+
+    -- Create new policy: authenticated users only
+    EXECUTE format(
+      'CREATE POLICY "authenticated_full_access" ON %I
+       FOR ALL TO authenticated
+       USING (true) WITH CHECK (true)', t);
+  END LOOP;
+END;
+$$;
+
+-- Grant RPC functions to authenticated role
+GRANT EXECUTE ON FUNCTION next_admission_no(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION next_roll_no(UUID, UUID) TO authenticated;
+
+-- Revoke RPC access from anon (no longer needed)
+REVOKE EXECUTE ON FUNCTION next_admission_no(UUID) FROM anon;
+REVOKE EXECUTE ON FUNCTION next_roll_no(UUID, UUID) FROM anon;
