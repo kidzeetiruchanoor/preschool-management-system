@@ -175,10 +175,7 @@ export const DB = {
       father_name: s.fatherName || null, father_phone: s.fatherPhone || null,
       mother_name: s.motherName || null, mother_phone: s.motherPhone || null,
       address: s.address || null, enroll_date: s.enrollDate || today(),
-      status: s.status || 'Active', notes: s.notes || null,
-      // Note: drive_folder_id intentionally omitted here — the document upload
-      // feature replaced manual Drive links. Not sending this key means any
-      // legacy value already stored is left untouched, not overwritten to null.
+      status: s.status || 'Active', notes: s.notes || null, drive_folder_id: s.driveLink || null,
     }
     const agreed = cls.fee_type === 'monthly' ? s.monthlyFee : s.annualFee
 
@@ -190,7 +187,7 @@ export const DB = {
           .update({ class_id: cls.id, agreed_fee: agreed || 0 })
           .eq('id', s._enrollId)
       }
-      return mapStudent({ ...updated, student_enrollments: [{ id: s._enrollId, academic_year_id: s._ayId, class_id: cls.id, roll_no: s.rollNo, agreed_fee: agreed || 0 }] })
+      return { ...s, ...updated, driveLink: s.driveLink }
     } else {
       const { data: admNo }  = await supabase.rpc('next_admission_no', { p_ay_id: ayId })
       const { data: rollNo } = await supabase.rpc('next_roll_no', { p_ay_id: ayId, p_class_id: cls.id })
@@ -252,8 +249,7 @@ export const DB = {
       name: t.name, phone: t.phone || null, role: t.role || 'Teacher',
       aadhaar: t.aadhaar || null, join_date: t.joinDate || today(),
       monthly_salary: t.salary || null, is_active: t.active !== false,
-      notes: t.notes || null,
-      // drive_folder_id intentionally omitted — see note in saveStudent above
+      notes: t.notes || null, drive_folder_id: t.driveLink || null,
     }
     if (t.id) {
       const { data, error } = await supabase.from('staff').update(row).eq('id', t.id).select().single()
@@ -370,65 +366,5 @@ export const DB = {
   async deleteEnquiry(id) {
     const { error } = await supabase.from('enquiries').delete().eq('id', id)
     return !error
-  },
-
-  // ── Documents (Supabase Storage, provider-flexible) ───────────────
-  async getDocuments(entityType, entityId) {
-    const { data, error } = await supabase.from('documents')
-      .select('*')
-      .eq('entity_type', entityType)
-      .eq('entity_id', entityId)
-      .order('uploaded_at', { ascending: false })
-    if (error) { console.error(error); return [] }
-    return data
-  },
-
-  async uploadDocument({ file, entityType, entityId, docType, pathPrefix }) {
-    const { data: { user } } = await supabase.auth.getUser()
-    const ext = file.name.split('.').pop()
-    const path = `${pathPrefix}/${docType}_${Date.now()}.${ext}`
-
-    const { error: uploadError } = await supabase.storage
-      .from('kidzee-documents')
-      .upload(path, file, { contentType: file.type, upsert: false })
-    if (uploadError) { console.error(uploadError); return null }
-
-    const { data, error } = await supabase.from('documents').insert({
-      entity_type: entityType,
-      entity_id: entityId,
-      doc_type: docType,
-      storage_provider: 'supabase',
-      storage_path: path,
-      file_name: file.name,
-      mime_type: file.type,
-      file_size_bytes: file.size,
-      uploaded_by: user?.id || null,
-    }).select().single()
-
-    if (error) {
-      await supabase.storage.from('kidzee-documents').remove([path])
-      console.error(error)
-      return null
-    }
-    return data
-  },
-
-  async getDocumentUrl(doc, forDownload = false) {
-    const { data, error } = await supabase.storage
-      .from('kidzee-documents')
-      .createSignedUrl(doc.storage_path, 60, forDownload ? { download: doc.file_name } : undefined)
-    if (error) { console.error(error); return null }
-    return data.signedUrl
-  },
-
-  async deleteDocument(doc) {
-    const { error: storageError } = await supabase.storage
-      .from('kidzee-documents')
-      .remove([doc.storage_path])
-    if (storageError) { console.error(storageError); return false }
-
-    const { error: dbError } = await supabase.from('documents').delete().eq('id', doc.id)
-    if (dbError) { console.error(dbError); return false }
-    return true
   },
 }

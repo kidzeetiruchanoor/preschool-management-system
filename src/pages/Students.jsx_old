@@ -4,18 +4,15 @@ import { DB } from '../lib/db'
 import { CLASSES, STUDENT_STATUSES, STUDENT_STATUS_COLOR, isDaycare } from '../lib/constants'
 import { fmt, today, currentAcademicYear, academicYearOptions, monthLabel } from '../lib/utils'
 import { Badge, Btn, Input, Select, Card, Modal, EmptyState, Pill } from '../components/ui'
-import DocumentUpload from '../components/DocumentUpload'
-import DocumentList from '../components/DocumentList'
 
 const blankStudent = () => ({
   id: null, admissionNo:'', rollNo:'', name:'', dob:'', section:'Playgroup', aadhaar:'',
   fatherName:'', fatherPhone:'', motherName:'', motherPhone:'',
-  address:'', enrollDate: today(), monthlyFee:'', annualFee:'', status:'Active', notes:'',
+  address:'', enrollDate: today(), monthlyFee:'', annualFee:'', status:'Active', notes:'', driveLink:'',
 })
 
 function StudentModal({ modal, onClose, onSubmit }) {
   const [d, setD] = useState(modal.data)
-  const [docsRefresh, setDocsRefresh] = useState(0)
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
   const dc = isDaycare(d.section)
   return (
@@ -58,21 +55,11 @@ function StudentModal({ modal, onClose, onSubmit }) {
           </div>
         </div>
         <Input label="Address" value={d.address} onChange={e => set('address', e.target.value)} />
-        {d.id ? (
-          <div>
-            <DocumentUpload
-              entityType="student"
-              entityId={d.id}
-              pathPrefix={`students/${d.admissionNo || d.id}`}
-              onUploaded={() => setDocsRefresh(n => n + 1)}
-            />
-            <DocumentList entityType="student" entityId={d.id} refreshKey={docsRefresh} />
-          </div>
-        ) : (
-          <div style={{ fontSize:12, color: C.muted, background: C.hover, padding:'10px 12px', borderRadius:8 }}>
-            Save the student first, then reopen to upload documents (Aadhaar, birth certificate, photo).
-          </div>
-        )}
+        <div style={{ background: C.tealLight, borderRadius:10, padding:'12px 14px' }}>
+          <div style={{ fontSize:12, fontWeight:600, color: C.teal, marginBottom:8 }}>📁 DOCUMENTS (Google Drive)</div>
+          <Input label="Google Drive Folder Link" value={d.driveLink || ''} onChange={e => set('driveLink', e.target.value)} placeholder="Paste shared Drive folder URL" />
+          <div style={{ fontSize:11, color: C.muted, marginTop:6 }}>Create a folder in Google Drive, upload Aadhaar, birth certificate and photo, paste the share link above.</div>
+        </div>
         <Select label="Status" value={d.status || 'Active'} onChange={e => set('status', e.target.value)}>
           {STUDENT_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
         </Select>
@@ -151,7 +138,7 @@ function StudentsTable({ students, setStudents, convertEnquiry, onConvertDone })
               { label:'Father Phone', value:'fatherPhone' }, { label:'Mother Name', value:'motherName' },
               { label:'Mother Phone', value:'motherPhone' }, { label:'Address', value:'address' },
               { label:'Enrolment Date', value:'enrollDate' }, { label:'Monthly Fee', value:'monthlyFee' },
-              { label:'Annual Fee', value:'annualFee' }, { label:'Status', value:'status' },
+              { label:'Annual Fee', value:'annualFee' }, { label:'Status', value:'status' }, { label:'Drive Link', value:'driveLink' },
             ])
           }}>Export CSV</Btn>
           <Btn onClick={() => setModal({ mode:'add', data: blankStudent() })}>+ Add Student</Btn>
@@ -187,6 +174,12 @@ function StudentsTable({ students, setStudents, convertEnquiry, onConvertDone })
                   <div style={{ fontSize:13, fontWeight:700, color: C.amber, marginTop:4 }}>
                     {isDaycare(s.section) ? `${fmt(s.monthlyFee)}/mo` : `${fmt(s.annualFee)}/year`}
                   </div>
+                  {s.driveLink && (
+                    <a href={s.driveLink} target="_blank" rel="noreferrer"
+                      style={{ display:'inline-flex', alignItems:'center', gap:5, marginTop:6, fontSize:12, fontWeight:600, color: C.teal, textDecoration:'none', background: C.tealLight, padding:'3px 10px', borderRadius:8 }}>
+                      📁 View Documents
+                    </a>
+                  )}
                 </div>
                 <div style={{ display:'flex', flexDirection:'column', gap:6, flexShrink:0, alignItems:'flex-end' }}>
                   <Btn small variant="ghost" onClick={() => setModal({ mode:'edit', data: { ...s } })}>Edit</Btn>

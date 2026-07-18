@@ -3,15 +3,12 @@ import { C } from '../lib/styles'
 import { DB } from '../lib/db'
 import { fmt, today, currentYM, monthLabel } from '../lib/utils'
 import { Badge, Btn, Input, Select, Card, Modal, EmptyState } from '../components/ui'
-import DocumentUpload from '../components/DocumentUpload'
-import DocumentList from '../components/DocumentList'
 
 const ROLES = ['Teacher','Assistant Teacher','Coordinator','Admin','Support Staff']
-const blankTeacher = () => ({ id:null, name:'', phone:'', role:'Teacher', joinDate: today(), salary:'', aadhaar:'', active:true, notes:'' })
+const blankTeacher = () => ({ id:null, name:'', phone:'', role:'Teacher', joinDate: today(), salary:'', aadhaar:'', active:true, notes:'', driveLink:'' })
 
 function TeacherForm({ data: init, onSubmit, onClose }) {
   const [d, setD] = useState(init)
-  const [docsRefresh, setDocsRefresh] = useState(0)
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
@@ -21,21 +18,11 @@ function TeacherForm({ data: init, onSubmit, onClose }) {
       <Input label="Join Date" type="date" value={d.joinDate} onChange={e => set('joinDate', e.target.value)} />
       <Input label="Monthly Salary (Rs.)" type="number" value={d.salary} onChange={e => set('salary', e.target.value)} />
       <Input label="Aadhaar Number" value={d.aadhaar} onChange={e => set('aadhaar', e.target.value.replace(/\D/g,'').slice(0,12))} placeholder="12-digit Aadhaar" />
-      {d.id ? (
-        <div>
-          <DocumentUpload
-            entityType="staff"
-            entityId={d.id}
-            pathPrefix={`staff/${d.id}`}
-            onUploaded={() => setDocsRefresh(n => n + 1)}
-          />
-          <DocumentList entityType="staff" entityId={d.id} refreshKey={docsRefresh} />
-        </div>
-      ) : (
-        <div style={{ fontSize:12, color: C.muted, background: C.hover, padding:'10px 12px', borderRadius:8 }}>
-          Save the staff member first, then reopen to upload documents (Aadhaar, certificate, PAN, photo).
-        </div>
-      )}
+      <div style={{ background: C.tealLight, borderRadius:10, padding:'12px 14px' }}>
+        <div style={{ fontSize:12, fontWeight:600, color: C.teal, marginBottom:8 }}>📁 DOCUMENTS (Google Drive)</div>
+        <Input label="Google Drive Folder Link" value={d.driveLink||''} onChange={e => set('driveLink', e.target.value)} placeholder="Paste shared Drive folder URL" />
+        <div style={{ fontSize:11, color: C.muted, marginTop:6 }}>Upload Aadhaar, degree certificate, PAN, photo and paste the share link.</div>
+      </div>
       <label style={{ fontSize:13, fontWeight:500 }}>Notes
         <textarea value={d.notes} onChange={e => set('notes', e.target.value)} rows={2}
           style={{ display:'block', width:'100%', marginTop:4, padding:'8px 12px', borderRadius:8, border:`1.5px solid ${C.border}`, fontSize:14, resize:'vertical' }} />
@@ -118,6 +105,12 @@ export default function Teachers({ teachers, setTeachers, salaryRecords, setSala
                       {t.aadhaar && <> · Aadhaar: {t.aadhaar}</>}
                       {rec && <> · Paid: <b style={{ color: C.success }}>{fmt(rec.amount)}</b> on {rec.paidDate} (auto-logged as expense)</>}
                     </div>
+                    {t.driveLink && (
+                      <a href={t.driveLink} target="_blank" rel="noreferrer"
+                        style={{ display:'inline-flex', alignItems:'center', gap:5, marginTop:6, fontSize:12, fontWeight:600, color: C.teal, textDecoration:'none', background: C.tealLight, padding:'3px 10px', borderRadius:8 }}>
+                        📁 View Documents
+                      </a>
+                    )}
                   </div>
                   <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
                     <Btn small variant="ghost" onClick={() => setModal({ mode:'edit', data: { ...t } })}>Edit</Btn>

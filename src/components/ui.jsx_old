@@ -11,11 +11,10 @@ export const Pill = ({ active, onClick, children }) => (
     transition:'all .15s' }}>{children}</button>
 )
 
-export const Btn = ({ onClick, children, variant = 'primary', small, disabled, style: sx = {} }) => (
-  <button onClick={onClick} disabled={disabled} style={{
+export const Btn = ({ onClick, children, variant = 'primary', small, style: sx = {} }) => (
+  <button onClick={onClick} style={{
     padding: small ? '5px 12px' : '9px 18px', borderRadius:8, border:'none', fontWeight:600,
-    fontSize: small ? 12 : 14, cursor: disabled ? 'not-allowed' : 'pointer', transition:'opacity .15s',
-    opacity: disabled ? 0.5 : 1,
+    fontSize: small ? 12 : 14, cursor:'pointer', transition:'opacity .15s',
     background: variant==='primary' ? C.teal : variant==='amber' ? C.amber : variant==='danger' ? C.danger : variant==='purple' ? C.purple : C.hover,
     color: variant==='ghost' ? C.muted : '#fff', ...sx,
   }}>{children}</button>
