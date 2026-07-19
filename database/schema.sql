@@ -528,3 +528,230 @@ GRANT EXECUTE ON FUNCTION next_roll_no(UUID, UUID) TO authenticated;
 -- Revoke RPC access from anon (no longer needed)
 REVOKE EXECUTE ON FUNCTION next_admission_no(UUID) FROM anon;
 REVOKE EXECUTE ON FUNCTION next_roll_no(UUID, UUID) FROM anon;
+
+
+-- ================================================================
+-- KIDZEE TIRUCHANOOR — Document Management Migration
+-- Run this ONCE in Supabase SQL Editor
+-- Extends existing `documents` table for Supabase Storage,
+-- with a provider column so Google Drive can be added later
+-- without any schema changes.
+-- ================================================================
+
+-- 1. Extend doc_type enum with transfer_certificate
+ALTER TYPE doc_type ADD VALUE IF NOT EXISTS 'transfer_certificate';
+
+-- 2. Add new columns to the existing documents table
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS storage_provider TEXT NOT NULL DEFAULT 'supabase',
+  ADD COLUMN IF NOT EXISTS storage_path     TEXT,
+  ADD COLUMN IF NOT EXISTS uploaded_by      UUID REFERENCES auth.users(id);
+
+-- storage_provider values used by the app: 'supabase' | 'google_drive'
+-- storage_path = Supabase Storage object path when provider = 'supabase'
+--              = Google Drive file ID when provider = 'google_drive' (future)
+-- drive_file_id / drive_folder_id columns already exist from original
+-- schema and remain unused while provider = 'supabase'
+
+-- 3. RLS on documents table (authenticated users only, matches rest of app)
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "authenticated_full_access" ON documents;
+CREATE POLICY "authenticated_full_access" ON documents
+  FOR ALL TO authenticated
+  USING (true) WITH CHECK (true);
+
+-- 4. Grants (required in addition to RLS — same pattern as rest of schema)
+GRANT SELECT, INSERT, UPDATE, DELETE ON documents TO authenticated;
+
+-- ================================================================
+-- STORAGE BUCKET SETUP — must also be done manually in Supabase
+-- Dashboard → Storage → New Bucket
+--   Name: kidzee-documents
+--   Public: OFF (must be private)
+-- ================================================================
+
+-- 5. Storage RLS policies (run after creating the bucket above)
+-- These restrict all storage access to authenticated users only.
+
+CREATE POLICY "authenticated_upload"
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'kidzee-documents');
+
+CREATE POLICY "authenticated_read"
+  ON storage.objects FOR SELECT TO authenticated
+  USING (bucket_id = 'kidzee-documents');
+
+CREATE POLICY "authenticated_delete"
+  ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'kidzee-documents');
+
+
+-- ================================================================
+-- KIDZEE TIRUCHANOOR — Schema Patch
+-- Run this ONCE in Supabase SQL Editor after your initial schema
+-- ================================================================
+
+-- ── 1. Missing columns ─────────────────────────────────────────
+
+ALTER TABLE enquiries
+  ADD COLUMN IF NOT EXISTS child_age       TEXT,
+  ADD COLUMN IF NOT EXISTS class_interested TEXT DEFAULT 'Playgroup',
+  ADD COLUMN IF NOT EXISTS alt_phone       TEXT,
+  ADD COLUMN IF NOT EXISTS notes           TEXT;
+
+ALTER TABLE fee_payments
+  ADD COLUMN IF NOT EXISTS note                TEXT,
+  ADD COLUMN IF NOT EXISTS academic_year_label TEXT;
+
+ALTER TABLE expenses
+  ADD COLUMN IF NOT EXISTS linked_salary BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE staff
+  ADD COLUMN IF NOT EXISTS drive_folder_id TEXT;
+
+-- ── 2. Unique constraints (required for UPSERT) ─────────────────
+
+ALTER TABLE attendance
+  DROP CONSTRAINT IF EXISTS attendance_entity_date_unique;
+ALTER TABLE attendance
+  ADD CONSTRAINT attendance_entity_date_unique
+  UNIQUE (entity_type, entity_id, date);
+
+ALTER TABLE salary_payments
+  DROP CONSTRAINT IF EXISTS salary_staff_month_unique;
+ALTER TABLE salary_payments
+  ADD CONSTRAINT salary_staff_month_unique
+  UNIQUE (staff_id, pay_month);
+
+-- ── 3. next_admission_no ────────────────────────────────────────
+-- Called from app when adding a new student.
+-- Format: KZT{YY}{0001..9999}   e.g. KZT260001
+
+CREATE OR REPLACE FUNCTION next_admission_no(p_ay_id UUID)
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_seq   INTEGER;
+  v_label TEXT;
+  v_yy    TEXT;
+BEGIN
+  INSERT INTO admission_counters (academic_year_id, last_seq)
+  VALUES (p_ay_id, 1)
+  ON CONFLICT (academic_year_id)
+  DO UPDATE SET last_seq = admission_counters.last_seq + 1
+  RETURNING last_seq INTO v_seq;
+
+  SELECT label INTO v_label FROM academic_years WHERE id = p_ay_id;
+  -- label = "2026-27" → chars 3-4 = "26"
+  v_yy := SUBSTRING(v_label, 3, 2);
+  RETURN 'KZT' || v_yy || LPAD(v_seq::TEXT, 4, '0');
+END;
+$$;
+
+-- ── 4. next_roll_no ─────────────────────────────────────────────
+-- Format: {YY}{CC}{NN}   e.g. 26NS03
+
+CREATE OR REPLACE FUNCTION next_roll_no(p_ay_id UUID, p_class_id UUID)
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_seq   INTEGER;
+  v_label TEXT;
+  v_code  TEXT;
+  v_yy    TEXT;
+BEGIN
+  INSERT INTO roll_counters (academic_year_id, class_id, last_seq)
+  VALUES (p_ay_id, p_class_id, 1)
+  ON CONFLICT (academic_year_id, class_id)
+  DO UPDATE SET last_seq = roll_counters.last_seq + 1
+  RETURNING last_seq INTO v_seq;
+
+  SELECT label INTO v_label FROM academic_years WHERE id = p_ay_id;
+  SELECT code  INTO v_code  FROM classes          WHERE id = p_class_id;
+  v_yy := SUBSTRING(v_label, 3, 2);
+  RETURN v_yy || v_code || LPAD(v_seq::TEXT, 2, '0');
+END;
+$$;
+
+-- ── 5. Salary → Expense trigger ────────────────────────────────
+-- Automatically creates an Expense row whenever a salary payment
+-- is inserted, and links it back via expense_id.
+
+CREATE OR REPLACE FUNCTION fn_auto_salary_expense()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_exp_id   UUID;
+  v_staff_nm TEXT;
+BEGIN
+  SELECT name INTO v_staff_nm FROM staff WHERE id = NEW.staff_id;
+
+  INSERT INTO expenses (category, amount, expense_date, note, linked_salary)
+  VALUES (
+    'Salary',
+    NEW.amount,
+    COALESCE(NEW.paid_date, CURRENT_DATE),
+    'Salary - ' || COALESCE(v_staff_nm, 'Staff') || ' (' || NEW.pay_month || ')',
+    TRUE
+  )
+  RETURNING id INTO v_exp_id;
+
+  NEW.expense_id := v_exp_id;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_salary_expense ON salary_payments;
+CREATE TRIGGER trg_salary_expense
+BEFORE INSERT ON salary_payments
+FOR EACH ROW
+WHEN (NEW.expense_id IS NULL)
+EXECUTE FUNCTION fn_auto_salary_expense();
+
+-- ── 6. RLS policies ─────────────────────────────────────────────
+-- Phase 1: anon key has full access (no user auth yet).
+-- Phase 2: replace these with user-scoped policies once
+--          Supabase Auth is wired up.
+
+DO $$
+DECLARE
+  t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'students','student_enrollments','staff','enquiries',
+    'fee_payments','salary_payments','expenses','attendance',
+    'documents','academic_years','classes',
+    'admission_counters','roll_counters'
+  ]
+  LOOP
+    -- Drop any existing policies that block anon access
+    EXECUTE format(
+      'DROP POLICY IF EXISTS "Authenticated users have full access" ON %I', t);
+    EXECUTE format(
+      'DROP POLICY IF EXISTS "anon_full_access" ON %I', t);
+    -- Create permissive anon policy
+    EXECUTE format(
+      'CREATE POLICY "anon_full_access" ON %I FOR ALL TO anon
+       USING (true) WITH CHECK (true)', t);
+  END LOOP;
+END;
+$$;
+
+-- Grant anon role execute rights on the two RPC functions
+GRANT EXECUTE ON FUNCTION next_admission_no(UUID) TO anon;
+GRANT EXECUTE ON FUNCTION next_roll_no(UUID, UUID) TO anon;
+
+-- ── 7. Seed current academic year if missing ───────────────────
+INSERT INTO academic_years (label, start_date, end_date, is_current)
+VALUES ('2026-27', '2026-05-01', '2027-04-30', TRUE)
+ON CONFLICT (label) DO NOTHING;
+
+
+
