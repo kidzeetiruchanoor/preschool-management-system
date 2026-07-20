@@ -5,6 +5,7 @@ import { fmt, today, currentYM, monthLabel } from '../lib/utils'
 import { Badge, Btn, Input, Select, Card, Modal, EmptyState } from '../components/ui'
 import DocumentUpload from '../components/DocumentUpload'
 import DocumentList from '../components/DocumentList'
+import FaceEnrollment from '../components/FaceEnrollment'
 
 const ROLES = ['Teacher','Assistant Teacher','Coordinator','Admin','Support Staff']
 const blankTeacher = () => ({ id:null, name:'', phone:'', role:'Teacher', joinDate: today(), salary:'', aadhaar:'', active:true, notes:'' })
@@ -36,6 +37,7 @@ function TeacherForm({ data: init, onSubmit, onClose }) {
           Save the staff member first, then reopen to upload documents (Aadhaar, certificate, PAN, photo).
         </div>
       )}
+      {d.id && <FaceEnrollment teacherId={d.id} />}
       <label style={{ fontSize:13, fontWeight:500 }}>Notes
         <textarea value={d.notes} onChange={e => set('notes', e.target.value)} rows={2}
           style={{ display:'block', width:'100%', marginTop:4, padding:'8px 12px', borderRadius:8, border:`1.5px solid ${C.border}`, fontSize:14, resize:'vertical' }} />

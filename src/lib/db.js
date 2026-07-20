@@ -431,4 +431,123 @@ export const DB = {
     if (dbError) { console.error(dbError); return false }
     return true
   },
+
+  // ── Teacher Face Profiles (admin-side: enrollment management) ────
+  // Note: these run under an admin login. The kiosk page uses its
+  // own read-only fetch (see loadAllFaceProfilesForKiosk below) —
+  // kept separate because the kiosk RLS policy only grants SELECT,
+  // and it's clearer to have distinct entry points than one function
+  // that behaves differently depending on which account calls it.
+
+  async getFaceProfiles(teacherId) {
+    const { data, error } = await supabase.from('teacher_face_profiles')
+      .select('*')
+      .eq('teacher_id', teacherId)
+      .order('sample_index')
+    if (error) { console.error(error); return [] }
+    return data
+  },
+
+  async addFaceProfile(teacherId, descriptorArray, sampleIndex) {
+    const { data, error } = await supabase.from('teacher_face_profiles').insert({
+      teacher_id: teacherId,
+      descriptor: descriptorArray,
+      sample_index: sampleIndex,
+    }).select().single()
+    if (error) { console.error(error); return null }
+    return data
+  },
+
+  async deleteFaceProfile(id) {
+    const { error } = await supabase.from('teacher_face_profiles').delete().eq('id', id)
+    return !error
+  },
+
+  async deleteAllFaceProfiles(teacherId) {
+    const { error } = await supabase.from('teacher_face_profiles').delete().eq('teacher_id', teacherId)
+    return !error
+  },
+
+  // ── Kiosk-side reads (called while logged in as the kiosk account) ─
+  // Loads every enrolled teacher's descriptors in one query, joined
+  // with their name, so the kiosk can match a live face against all
+  // of them without a query per teacher.
+
+  async loadAllFaceProfilesForKiosk() {
+    const { data, error } = await supabase
+      .from('teacher_face_profiles')
+      .select('teacher_id, descriptor, staff:teacher_id (name)')
+    if (error) { console.error(error); return [] }
+    return data.map(row => ({
+      teacherId: row.teacher_id,
+      teacherName: row.staff?.name || 'Unknown',
+      descriptor: row.descriptor, // still JSON array here — caller converts via descriptorFromJSON
+    }))
+  },
+
+  // ── Teacher Attendance (kiosk check-in/out) ───────────────────────
+
+  async getTodayAttendance(teacherId) {
+    const todayStr = new Date().toISOString().slice(0, 10)
+    const { data, error } = await supabase.from('teacher_attendance')
+      .select('*')
+      .eq('teacher_id', teacherId)
+      .eq('attendance_date', todayStr)
+      .maybeSingle()
+    if (error) { console.error(error); return null }
+    return data
+  },
+
+  async checkIn(teacherId, deviceName) {
+    const todayStr = new Date().toISOString().slice(0, 10)
+    const { data, error } = await supabase.from('teacher_attendance').insert({
+      teacher_id: teacherId,
+      attendance_date: todayStr,
+      check_in_time: new Date().toISOString(),
+      device_name: deviceName || null,
+    }).select().single()
+    if (error) {
+      // Unique constraint violation means a row already exists for today —
+      // caller should treat this as "already checked in", not a hard failure.
+      if (error.code === '23505') return { alreadyExists: true }
+      console.error(error)
+      return null
+    }
+    return data
+  },
+
+  async checkOut(teacherId) {
+    const todayStr = new Date().toISOString().slice(0, 10)
+    const { data, error } = await supabase.from('teacher_attendance')
+      .update({ check_out_time: new Date().toISOString() })
+      .eq('teacher_id', teacherId)
+      .eq('attendance_date', todayStr)
+      .is('check_out_time', null) // guards against double checkout at the query level
+      .select()
+      .maybeSingle()
+    if (error) { console.error(error); return null }
+    return data // null if no matching row (already checked out, or never checked in)
+  },
+
+  // ── Admin-side attendance reports ─────────────────────────────────
+
+  async getAttendanceForDate(dateStr) {
+    const { data, error } = await supabase.from('teacher_attendance')
+      .select('*, staff:teacher_id (name, role)')
+      .eq('attendance_date', dateStr)
+      .order('check_in_time')
+    if (error) { console.error(error); return [] }
+    return data
+  },
+
+  async getAttendanceForMonth(yearMonth) {
+    // yearMonth: "YYYY-MM"
+    const { data, error } = await supabase.from('teacher_attendance')
+      .select('*, staff:teacher_id (name, role)')
+      .gte('attendance_date', `${yearMonth}-01`)
+      .lte('attendance_date', `${yearMonth}-31`)
+      .order('attendance_date')
+    if (error) { console.error(error); return [] }
+    return data
+  },
 }
