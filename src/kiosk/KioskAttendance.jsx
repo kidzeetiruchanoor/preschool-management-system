@@ -38,8 +38,21 @@ export default function KioskAttendance({ onExit }) {
     let cancelled = false
 
     async function setup() {
-      await loadFaceModels()
-      const raw = await DB.loadAllFaceProfilesForKiosk()
+      try {
+        await loadFaceModels()
+      } catch (err) {
+        console.error('Model loading failed:', err)
+        throw new Error('Could not load face recognition models. Check /models files.')
+      }
+
+      let raw
+      try {
+        raw = await DB.loadAllFaceProfilesForKiosk()
+      } catch (err) {
+        console.error('Loading enrolled profiles failed:', err)
+        throw new Error('Could not load enrolled teachers. Check kiosk session/RLS.')
+      }
+
       const converted = raw.map(p => ({
         teacherId: p.teacherId,
         teacherName: p.teacherName,
@@ -48,7 +61,14 @@ export default function KioskAttendance({ onExit }) {
       if (cancelled) return
       setEnrolledProfiles(converted)
 
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+      let stream
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true })
+      } catch (err) {
+        console.error('Camera access failed:', err)
+        throw new Error(`Could not access camera (${err.name}). Check browser permissions.`)
+      }
+
       if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
       streamRef.current = stream
       videoRef.current.srcObject = stream
@@ -59,7 +79,7 @@ export default function KioskAttendance({ onExit }) {
 
     setup().catch(err => {
       console.error(err)
-      setResult({ type: 'error', message: 'Could not start the camera. Please contact admin.' })
+      setResult({ type: 'error', message: err.message || 'Something went wrong. Please contact admin.' })
       setPhase('result')
     })
 
