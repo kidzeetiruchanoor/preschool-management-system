@@ -1,87 +1,292 @@
-import { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
-import { DB } from '../lib/db'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { C } from '../lib/styles'
+import { DB } from '../lib/db'
+import {
+  loadFaceModels, detectSingleFace, matchDescriptor, descriptorFromJSON,
+} from '../lib/faceRecognition'
 
-// ── PHASE 4a PLACEHOLDER ──────────────────────────────────────────
-// This is intentionally minimal — it exists to prove the kiosk
-// session actually works end-to-end (auth + a real RLS-governed
-// database read) before Phase 4b replaces this with the full
-// camera-based check-in/check-out screen.
-//
-// What it proves if this works correctly:
-//   1. The serverless function successfully logged in as the kiosk
-//      account and returned valid tokens
-//   2. This browser session is now authenticated AS the kiosk account
-//   3. That account can read teacher_face_profiles (per Phase 1 RLS)
-//   4. That account CANNOT read students (per Phase 1 RLS) — the
-//      negative test below is just as important as the positive one
+// How long a face must be steadily recognized before we act on it.
+// Prevents acting on a single lucky/unlucky frame — the person needs
+// to hold still in front of the camera for a moment, which also
+// naturally discourages someone just walking past being mis-detected.
+const STABLE_FRAMES_REQUIRED = 5
+const SCAN_INTERVAL_MS = 350
+
+// How long the result screen (success or error) stays up before
+// automatically returning to the ready-to-scan state.
+const RESULT_DISPLAY_MS = 3000
+
+const DEVICE_NAME = 'Entrance Tablet'
+
 export default function KioskAttendance({ onExit }) {
-  const [status, setStatus] = useState('Checking kiosk session...')
-  const [profileCount, setProfileCount] = useState(null)
-  const [studentsBlocked, setStudentsBlocked] = useState(null)
+  const [phase, setPhase] = useState('loading') // loading | ready | processing | result
+  const [liveHint, setLiveHint] = useState('')
+  const [result, setResult] = useState(null) // { type: 'success'|'error', ... }
+  const [enrolledProfiles, setEnrolledProfiles] = useState([])
+  const [activeMode, setActiveMode] = useState(null) // mirrors modeRef, for UI highlighting only
 
+  const videoRef = useRef(null)
+  const streamRef = useRef(null)
+  const scanTimerRef = useRef(null)
+  const resultTimerRef = useRef(null)
+  const stableMatchRef = useRef({ teacherId: null, count: 0 })
+  const busyRef = useRef(false) // guards against double-processing while a check-in/out is in flight
+  const modeRef = useRef(null) // 'in' | 'out' — set by the button the person tapped
+
+  // ── Setup: load models, load enrolled profiles, start camera ─────
   useEffect(() => {
-    async function runChecks() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        setStatus('❌ No active session — something went wrong.')
-        return
-      }
-      setStatus(`✓ Logged in as kiosk account (${user.email})`)
+    let cancelled = false
 
-      // Positive test: kiosk SHOULD be able to read face profiles
-      const profiles = await DB.loadAllFaceProfilesForKiosk()
-      setProfileCount(profiles.length)
+    async function setup() {
+      await loadFaceModels()
+      const raw = await DB.loadAllFaceProfilesForKiosk()
+      const converted = raw.map(p => ({
+        teacherId: p.teacherId,
+        teacherName: p.teacherName,
+        descriptor: descriptorFromJSON(p.descriptor),
+      }))
+      if (cancelled) return
+      setEnrolledProfiles(converted)
 
-      // Negative test: kiosk should NOT be able to read students —
-      // if this returns rows, the RLS lockdown from Phase 1 isn't
-      // actually working and needs to be re-checked before Phase 4b.
-      const { data: studentRows, error: studentError } = await supabase
-        .from('students').select('id').limit(1)
-      setStudentsBlocked(!studentRows || studentRows.length === 0)
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+      if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
+      streamRef.current = stream
+      videoRef.current.srcObject = stream
+      await videoRef.current.play()
+
+      setPhase('ready')
     }
-    runChecks()
+
+    setup().catch(err => {
+      console.error(err)
+      setResult({ type: 'error', message: 'Could not start the camera. Please contact admin.' })
+      setPhase('result')
+    })
+
+    return () => {
+      cancelled = true
+      stopEverything()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const stopEverything = () => {
+    if (scanTimerRef.current) clearInterval(scanTimerRef.current)
+    if (resultTimerRef.current) clearTimeout(resultTimerRef.current)
+    if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop())
+  }
+
+  // ── The scanning loop — only runs while phase === 'ready' AND a
+  // mode (in/out) has been selected by a button press ────────────
+  useEffect(() => {
+    if (phase !== 'ready') return
+
+    scanTimerRef.current = setInterval(async () => {
+      if (!modeRef.current || busyRef.current) return
+      if (!videoRef.current || videoRef.current.readyState < 2) return
+
+      const detection = await detectSingleFace(videoRef.current)
+
+      if (detection.status === 'none') {
+        setLiveHint('Position your face in front of the camera')
+        stableMatchRef.current = { teacherId: null, count: 0 }
+        return
+      }
+      if (detection.status === 'multiple') {
+        setLiveHint('Please make sure only one person is in front of the camera')
+        stableMatchRef.current = { teacherId: null, count: 0 }
+        return
+      }
+
+      // Exactly one face — try to match it
+      const match = matchDescriptor(detection.descriptor, enrolledProfiles)
+
+      if (match.status === 'no_enrollments') {
+        setLiveHint('No teachers enrolled yet. Contact admin.')
+        return
+      }
+      if (match.status === 'no_match') {
+        setLiveHint('Face not recognized. If you are enrolled, try adjusting lighting or angle.')
+        stableMatchRef.current = { teacherId: null, count: 0 }
+        return
+      }
+
+      // Matched — require it to stay stable for a few consecutive
+      // frames before acting, to avoid acting on a flicker/misread
+      if (stableMatchRef.current.teacherId === match.teacherId) {
+        stableMatchRef.current.count += 1
+      } else {
+        stableMatchRef.current = { teacherId: match.teacherId, count: 1 }
+      }
+
+      setLiveHint(`Recognizing ${match.teacherName}...`)
+
+      if (stableMatchRef.current.count >= STABLE_FRAMES_REQUIRED) {
+        busyRef.current = true
+        await handleRecognized(match.teacherId, match.teacherName)
+        busyRef.current = false
+      }
+    }, SCAN_INTERVAL_MS)
+
+    return () => clearInterval(scanTimerRef.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, enrolledProfiles])
+
+  // ── Acting on a confirmed, stable match ───────────────────────────
+  const handleRecognized = useCallback(async (teacherId, teacherName) => {
+    setPhase('processing')
+    const mode = modeRef.current
+
+    if (mode === 'in') {
+      const existing = await DB.getTodayAttendance(teacherId)
+      if (existing && existing.check_in_time) {
+        showResult({
+          type: 'error',
+          message: `${teacherName} is already checked in today.`,
+          teacherName,
+        })
+        return
+      }
+      const row = await DB.checkIn(teacherId, DEVICE_NAME)
+      if (!row || row.alreadyExists) {
+        showResult({ type: 'error', message: `${teacherName} is already checked in today.`, teacherName })
+        return
+      }
+      showResult({
+        type: 'success',
+        teacherName,
+        action: 'Check In recorded',
+        time: formatTime(row.check_in_time),
+      })
+    } else {
+      const row = await DB.checkOut(teacherId)
+      if (!row) {
+        showResult({
+          type: 'error',
+          message: `${teacherName} has not checked in today, or has already checked out.`,
+          teacherName,
+        })
+        return
+      }
+      showResult({
+        type: 'success',
+        teacherName,
+        action: 'Check Out recorded',
+        time: formatTime(row.check_out_time),
+        workingHours: row.working_hours,
+      })
+    }
+  }, [])
+
+  const showResult = (r) => {
+    setResult(r)
+    setPhase('result')
+    stableMatchRef.current = { teacherId: null, count: 0 }
+    modeRef.current = null
+    setActiveMode(null)
+    resultTimerRef.current = setTimeout(() => {
+      setResult(null)
+      setPhase('ready')
+      setLiveHint('')
+    }, RESULT_DISPLAY_MS)
+  }
+
+  const selectMode = (mode) => {
+    modeRef.current = mode
+    setActiveMode(mode)
+    setLiveHint('Look at the camera')
+  }
+
+  const handleExit = () => {
+    stopEverything()
+    onExit()
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════════════════════════════
+
+  if (phase === 'loading') {
+    return (
+      <FullScreenCenter>
+        <div style={{ fontSize: 16, color: C.muted }}>Starting camera...</div>
+      </FullScreenCenter>
+    )
+  }
+
+  if (phase === 'result' && result) {
+    return (
+      <FullScreenCenter>
+        <div style={{ fontSize: 56, marginBottom: 16 }}>{result.type === 'success' ? '✅' : '⚠️'}</div>
+        {result.type === 'success' ? (
+          <>
+            <div style={{ fontFamily: "'DM Serif Display'", fontSize: 28, color: C.teal, marginBottom: 6 }}>
+              Welcome, {result.teacherName}!
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: C.success, marginBottom: 4 }}>
+              {result.action}
+            </div>
+            <div style={{ fontSize: 32, fontWeight: 700, fontFamily: "'DM Serif Display'" }}>
+              {result.time}
+            </div>
+            {result.workingHours != null && (
+              <div style={{ fontSize: 14, color: C.muted, marginTop: 8 }}>
+                Working hours today: {result.workingHours}h
+              </div>
+            )}
+          </>
+        ) : (
+          <div style={{ fontSize: 18, color: C.danger, fontWeight: 600, maxWidth: 360 }}>
+            {result.message}
+          </div>
+        )}
+      </FullScreenCenter>
+    )
+  }
+
+  // phase === 'ready' or 'processing' — show the live camera view
   return (
     <div style={{
       minHeight: '100vh', background: C.bg, display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center', padding: 24, textAlign: 'center',
+      alignItems: 'center', padding: '32px 24px', textAlign: 'center',
     }}>
-      <div style={{ fontSize: 40, marginBottom: 16 }}>🚧</div>
-      <div style={{ fontFamily: "'DM Serif Display'", fontSize: 22, color: C.teal, marginBottom: 20 }}>
-        Phase 4a — Session Test
+      <div style={{ fontFamily: "'DM Serif Display'", fontSize: 22, color: C.teal, marginBottom: 4 }}>
+        Kidzee Tiruchanoor
+      </div>
+      <div style={{ fontSize: 13, color: C.muted, marginBottom: 20 }}>Staff Attendance</div>
+
+      <video ref={videoRef} muted playsInline
+        style={{ width: '100%', maxWidth: 420, borderRadius: 18, background: '#000', boxShadow: '0 4px 20px rgba(0,0,0,.12)' }} />
+
+      <div style={{
+        marginTop: 16, minHeight: 24, fontSize: 15, fontWeight: 600,
+        color: phase === 'processing' ? C.amber : C.muted,
+      }}>
+        {phase === 'processing' ? 'Recording attendance...' : (activeMode ? liveHint : 'Choose Check In or Check Out to begin')}
       </div>
 
-      <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 14, padding: 24, maxWidth: 420, textAlign: 'left' }}>
-        <div style={{ fontSize: 14, marginBottom: 12 }}>{status}</div>
-
-        {profileCount !== null && (
-          <div style={{ fontSize: 14, marginBottom: 12, color: C.success }}>
-            ✓ Can read face profiles ({profileCount} enrolled sample{profileCount !== 1 ? 's' : ''} found)
-          </div>
-        )}
-
-        {studentsBlocked !== null && (
-          <div style={{ fontSize: 14, color: studentsBlocked ? C.success : C.danger, fontWeight: 600 }}>
-            {studentsBlocked
-              ? '✓ Correctly BLOCKED from reading students table'
-              : '⚠ WARNING: kiosk can read students — RLS is not locked down correctly!'}
-          </div>
-        )}
-      </div>
-
-      <div style={{ fontSize: 12, color: C.muted, marginTop: 20, maxWidth: 340 }}>
-        This test screen will be replaced by the real camera check-in/check-out
-        UI in Phase 4b.
+      <div style={{ display: 'flex', gap: 16, marginTop: 24, width: '100%', maxWidth: 420 }}>
+        <button
+          onClick={() => selectMode('in')}
+          disabled={phase === 'processing'}
+          style={bigButtonStyle(C.success, activeMode === 'in')}
+        >
+          🟢 Check In
+        </button>
+        <button
+          onClick={() => selectMode('out')}
+          disabled={phase === 'processing'}
+          style={bigButtonStyle(C.danger, activeMode === 'out')}
+        >
+          🔴 Check Out
+        </button>
       </div>
 
       <button
-        onClick={onExit}
+        onClick={handleExit}
         style={{
-          marginTop: 24, padding: '10px 20px', borderRadius: 10, border: `1.5px solid ${C.border}`,
-          background: 'transparent', color: C.muted, fontSize: 13, fontWeight: 600,
+          marginTop: 32, padding: '8px 18px', borderRadius: 10, border: `1.5px solid ${C.border}`,
+          background: 'transparent', color: C.muted, fontSize: 12, fontWeight: 600,
           cursor: 'pointer', fontFamily: 'inherit',
         }}
       >
@@ -89,4 +294,31 @@ export default function KioskAttendance({ onExit }) {
       </button>
     </div>
   )
+}
+
+// ── Small helpers ───────────────────────────────────────────────
+
+function FullScreenCenter({ children }) {
+  return (
+    <div style={{
+      minHeight: '100vh', background: C.bg, display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center', padding: 24, textAlign: 'center',
+    }}>
+      {children}
+    </div>
+  )
+}
+
+function bigButtonStyle(color, active) {
+  return {
+    flex: 1, padding: '20px 0', borderRadius: 16, border: active ? `3px solid ${color}` : '3px solid transparent',
+    background: color, color: '#fff', fontSize: 18, fontWeight: 700,
+    cursor: 'pointer', fontFamily: 'inherit', boxShadow: `0 4px 14px ${color}40`,
+    opacity: 1, transition: 'transform .1s',
+    transform: active ? 'scale(1.03)' : 'scale(1)',
+  }
+}
+
+function formatTime(isoString) {
+  return new Date(isoString).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
 }
