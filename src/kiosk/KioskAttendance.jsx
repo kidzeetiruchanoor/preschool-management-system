@@ -126,6 +126,7 @@ export default function KioskAttendance({ onExit }) {
         return
       }
       if (match.status === 'no_match') {
+        console.log(`Face detected but not matched. Closest distance: ${match.closestDistance.toFixed(3)} (threshold: ${0.6})`)
         setLiveHint('Face not recognized. If you are enrolled, try adjusting lighting or angle.')
         stableMatchRef.current = { teacherId: null, count: 0 }
         return
@@ -138,6 +139,7 @@ export default function KioskAttendance({ onExit }) {
       }
 
       setLiveHint(`Recognizing ${match.teacherName}...`)
+      console.log(`Matched ${match.teacherName} — confidence ${(match.confidence * 100).toFixed(1)}%`)
 
       if (stableMatchRef.current.count >= STABLE_FRAMES_REQUIRED) {
         busyRef.current = true
