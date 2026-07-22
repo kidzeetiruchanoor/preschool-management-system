@@ -474,13 +474,21 @@ export const DB = {
   // of them without a query per teacher.
 
   async loadAllFaceProfilesForKiosk() {
-    const { data, error } = await supabase
-      .from('teacher_face_profiles')
-      .select('teacher_id, descriptor, staff(name)')
-    if (error) { console.error(error); return [] }
-    return data.map(row => ({
+    // Two separate queries instead of one embedded join — embedding
+    // through `staff` doesn't work here because RLS blocks the kiosk
+    // from that table entirely (by design). kiosk_staff_names is a
+    // narrow view exposing only id+name for exactly this purpose.
+    const [profilesRes, namesRes] = await Promise.all([
+      supabase.from('teacher_face_profiles').select('teacher_id, descriptor'),
+      supabase.from('kiosk_staff_names').select('id, name'),
+    ])
+    if (profilesRes.error) { console.error(profilesRes.error); return [] }
+    if (namesRes.error) { console.error(namesRes.error); return [] }
+
+    const nameById = Object.fromEntries((namesRes.data || []).map(n => [n.id, n.name]))
+    return (profilesRes.data || []).map(row => ({
       teacherId: row.teacher_id,
-      teacherName: row.staff?.name || 'Unknown',
+      teacherName: nameById[row.teacher_id] || 'Unknown',
       descriptor: row.descriptor, // still JSON array here — caller converts via descriptorFromJSON
     }))
   },
