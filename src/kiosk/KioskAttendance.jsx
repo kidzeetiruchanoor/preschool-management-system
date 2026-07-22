@@ -6,9 +6,6 @@ import {
 } from '../lib/faceRecognition'
 
 // How long a face must be steadily recognized before we act on it.
-// Prevents acting on a single lucky/unlucky frame — the person needs
-// to hold still in front of the camera for a moment, which also
-// naturally discourages someone just walking past being mis-detected.
 const STABLE_FRAMES_REQUIRED = 5
 const SCAN_INTERVAL_MS = 350
 
@@ -23,17 +20,22 @@ export default function KioskAttendance({ onExit }) {
   const [liveHint, setLiveHint] = useState('')
   const [result, setResult] = useState(null) // { type: 'success'|'error', ... }
   const [enrolledProfiles, setEnrolledProfiles] = useState([])
-  const [activeMode, setActiveMode] = useState(null) // mirrors modeRef, for UI highlighting only
+  const [activeMode, setActiveMode] = useState(null)
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const scanTimerRef = useRef(null)
   const resultTimerRef = useRef(null)
   const stableMatchRef = useRef({ teacherId: null, count: 0 })
-  const busyRef = useRef(false) // guards against double-processing while a check-in/out is in flight
-  const modeRef = useRef(null) // 'in' | 'out' — set by the button the person tapped
+  const busyRef = useRef(false)
+  const modeRef = useRef(null)
 
   // ── Setup: load models, load enrolled profiles, start camera ─────
+  // The <video> element is now rendered ONCE, unconditionally, for the
+  // entire lifetime of this component (see render below) — it never
+  // gets unmounted/remounted between phases. That means videoRef.current
+  // is stable and this effect only needs to attach the stream a single
+  // time, no re-attachment logic needed elsewhere.
   useEffect(() => {
     let cancelled = false
 
@@ -96,8 +98,7 @@ export default function KioskAttendance({ onExit }) {
     if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop())
   }
 
-  // ── The scanning loop — only runs while phase === 'ready' AND a
-  // mode (in/out) has been selected by a button press ────────────
+  // ── The scanning loop ──────────────────────────────────────────
   useEffect(() => {
     if (phase !== 'ready') return
 
@@ -118,7 +119,6 @@ export default function KioskAttendance({ onExit }) {
         return
       }
 
-      // Exactly one face — try to match it
       const match = matchDescriptor(detection.descriptor, enrolledProfiles)
 
       if (match.status === 'no_enrollments') {
@@ -131,8 +131,6 @@ export default function KioskAttendance({ onExit }) {
         return
       }
 
-      // Matched — require it to stay stable for a few consecutive
-      // frames before acting, to avoid acting on a flicker/misread
       if (stableMatchRef.current.teacherId === match.teacherId) {
         stableMatchRef.current.count += 1
       } else {
@@ -160,11 +158,7 @@ export default function KioskAttendance({ onExit }) {
     if (mode === 'in') {
       const existing = await DB.getTodayAttendance(teacherId)
       if (existing && existing.check_in_time) {
-        showResult({
-          type: 'error',
-          message: `${teacherName} is already checked in today.`,
-          teacherName,
-        })
+        showResult({ type: 'error', message: `${teacherName} is already checked in today.`, teacherName })
         return
       }
       const row = await DB.checkIn(teacherId, DEVICE_NAME)
@@ -172,28 +166,16 @@ export default function KioskAttendance({ onExit }) {
         showResult({ type: 'error', message: `${teacherName} is already checked in today.`, teacherName })
         return
       }
-      showResult({
-        type: 'success',
-        teacherName,
-        action: 'Check In recorded',
-        time: formatTime(row.check_in_time),
-      })
+      showResult({ type: 'success', teacherName, action: 'Check In recorded', time: formatTime(row.check_in_time) })
     } else {
       const row = await DB.checkOut(teacherId)
       if (!row) {
-        showResult({
-          type: 'error',
-          message: `${teacherName} has not checked in today, or has already checked out.`,
-          teacherName,
-        })
+        showResult({ type: 'error', message: `${teacherName} has not checked in today, or has already checked out.`, teacherName })
         return
       }
       showResult({
-        type: 'success',
-        teacherName,
-        action: 'Check Out recorded',
-        time: formatTime(row.check_out_time),
-        workingHours: row.working_hours,
+        type: 'success', teacherName, action: 'Check Out recorded',
+        time: formatTime(row.check_out_time), workingHours: row.working_hours,
       })
     }
   }, [])
@@ -223,55 +205,18 @@ export default function KioskAttendance({ onExit }) {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // RENDER
+  // RENDER — single persistent layout. The <video> element is always
+  // in the DOM from first render onward; loading/result states are
+  // shown as overlays on top of it, never by unmounting it. This is
+  // what fixes the "black video" bug — there is exactly one <video>
+  // node for the component's whole lifetime, so the stream attached
+  // in the effect above is always the one actually on screen.
   // ═══════════════════════════════════════════════════════════════
 
-  if (phase === 'loading') {
-    return (
-      <FullScreenCenter>
-        <div style={{ fontSize: 16, color: C.muted, marginBottom: 16 }}>Starting camera...</div>
-        {/* Kept in the DOM (just hidden) so videoRef.current is never null
-            when setup() tries to attach the camera stream to it. */}
-        <video ref={videoRef} muted playsInline style={{ display: 'none' }} />
-      </FullScreenCenter>
-    )
-  }
-
-  if (phase === 'result' && result) {
-    return (
-      <FullScreenCenter>
-        <div style={{ fontSize: 56, marginBottom: 16 }}>{result.type === 'success' ? '✅' : '⚠️'}</div>
-        {result.type === 'success' ? (
-          <>
-            <div style={{ fontFamily: "'DM Serif Display'", fontSize: 28, color: C.teal, marginBottom: 6 }}>
-              Welcome, {result.teacherName}!
-            </div>
-            <div style={{ fontSize: 18, fontWeight: 600, color: C.success, marginBottom: 4 }}>
-              {result.action}
-            </div>
-            <div style={{ fontSize: 32, fontWeight: 700, fontFamily: "'DM Serif Display'" }}>
-              {result.time}
-            </div>
-            {result.workingHours != null && (
-              <div style={{ fontSize: 14, color: C.muted, marginTop: 8 }}>
-                Working hours today: {result.workingHours}h
-              </div>
-            )}
-          </>
-        ) : (
-          <div style={{ fontSize: 18, color: C.danger, fontWeight: 600, maxWidth: 360 }}>
-            {result.message}
-          </div>
-        )}
-      </FullScreenCenter>
-    )
-  }
-
-  // phase === 'ready' or 'processing' — show the live camera view
   return (
     <div style={{
       minHeight: '100vh', background: C.bg, display: 'flex', flexDirection: 'column',
-      alignItems: 'center', padding: '32px 24px', textAlign: 'center',
+      alignItems: 'center', padding: '32px 24px', textAlign: 'center', position: 'relative',
     }}>
       <div style={{ fontFamily: "'DM Serif Display'", fontSize: 22, color: C.teal, marginBottom: 4 }}>
         Kidzee Tiruchanoor
@@ -291,14 +236,14 @@ export default function KioskAttendance({ onExit }) {
       <div style={{ display: 'flex', gap: 16, marginTop: 24, width: '100%', maxWidth: 420 }}>
         <button
           onClick={() => selectMode('in')}
-          disabled={phase === 'processing'}
+          disabled={phase !== 'ready'}
           style={bigButtonStyle(C.success, activeMode === 'in')}
         >
           🟢 Check In
         </button>
         <button
           onClick={() => selectMode('out')}
-          disabled={phase === 'processing'}
+          disabled={phase !== 'ready'}
           style={bigButtonStyle(C.danger, activeMode === 'out')}
         >
           🔴 Check Out
@@ -315,17 +260,53 @@ export default function KioskAttendance({ onExit }) {
       >
         ← Back to Welcome
       </button>
+
+      {/* ── Overlays ── */}
+      {phase === 'loading' && (
+        <Overlay>
+          <div style={{ fontSize: 16, color: C.muted }}>Starting camera...</div>
+        </Overlay>
+      )}
+
+      {phase === 'result' && result && (
+        <Overlay>
+          <div style={{ fontSize: 56, marginBottom: 16 }}>{result.type === 'success' ? '✅' : '⚠️'}</div>
+          {result.type === 'success' ? (
+            <>
+              <div style={{ fontFamily: "'DM Serif Display'", fontSize: 28, color: C.teal, marginBottom: 6 }}>
+                Welcome, {result.teacherName}!
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 600, color: C.success, marginBottom: 4 }}>
+                {result.action}
+              </div>
+              <div style={{ fontSize: 32, fontWeight: 700, fontFamily: "'DM Serif Display'" }}>
+                {result.time}
+              </div>
+              {result.workingHours != null && (
+                <div style={{ fontSize: 14, color: C.muted, marginTop: 8 }}>
+                  Working hours today: {result.workingHours}h
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ fontSize: 18, color: C.danger, fontWeight: 600, maxWidth: 360 }}>
+              {result.message}
+            </div>
+          )}
+        </Overlay>
+      )}
     </div>
   )
 }
 
 // ── Small helpers ───────────────────────────────────────────────
 
-function FullScreenCenter({ children }) {
+function Overlay({ children }) {
   return (
     <div style={{
-      minHeight: '100vh', background: C.bg, display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center', padding: 24, textAlign: 'center',
+      position: 'fixed', inset: 0, background: 'rgba(253,248,242,0.97)', zIndex: 50,
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      padding: 24, textAlign: 'center',
     }}>
       {children}
     </div>
