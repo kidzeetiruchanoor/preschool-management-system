@@ -476,7 +476,7 @@ export const DB = {
   async loadAllFaceProfilesForKiosk() {
     const { data, error } = await supabase
       .from('teacher_face_profiles')
-      .select('teacher_id, descriptor, staff:teacher_id (name)')
+      .select('teacher_id, descriptor, staff(name)')
     if (error) { console.error(error); return [] }
     return data.map(row => ({
       teacherId: row.teacher_id,
