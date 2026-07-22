@@ -229,7 +229,10 @@ export default function KioskAttendance({ onExit }) {
   if (phase === 'loading') {
     return (
       <FullScreenCenter>
-        <div style={{ fontSize: 16, color: C.muted }}>Starting camera...</div>
+        <div style={{ fontSize: 16, color: C.muted, marginBottom: 16 }}>Starting camera...</div>
+        {/* Kept in the DOM (just hidden) so videoRef.current is never null
+            when setup() tries to attach the camera stream to it. */}
+        <video ref={videoRef} muted playsInline style={{ display: 'none' }} />
       </FullScreenCenter>
     )
   }
