@@ -542,6 +542,18 @@ export const DB = {
       console.error(error)
       return null
     }
+
+    // Also mark this teacher "present" in the original attendance table
+    // (used by Staff Attendance reports / Today's Tasks), so an admin
+    // doesn't need to separately mark them present by hand. Best-effort —
+    // if this secondary write fails for any reason, the check-in itself
+    // has already succeeded and should not be treated as a failure.
+    try {
+      await this.setAttendance('staff', teacherId, todayStr, 'present')
+    } catch (syncErr) {
+      console.error('Could not sync attendance table after kiosk check-in:', syncErr)
+    }
+
     return data
   },
 
