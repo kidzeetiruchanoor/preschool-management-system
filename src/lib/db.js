@@ -493,6 +493,27 @@ export const DB = {
     }))
   },
 
+  // Fetches a signed URL for one teacher's "photo" document, for
+  // display on the kiosk result screen. Returns null if no photo was
+  // ever uploaded for them — caller should show a placeholder avatar
+  // in that case, not treat it as an error.
+  async getKioskStaffPhotoUrl(teacherId) {
+    const { data: row, error } = await supabase
+      .from('kiosk_staff_photos')
+      .select('storage_path')
+      .eq('teacher_id', teacherId)
+      .order('uploaded_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (error || !row) return null
+
+    const { data, error: urlError } = await supabase.storage
+      .from('kidzee-documents')
+      .createSignedUrl(row.storage_path, 120)
+    if (urlError) { console.error(urlError); return null }
+    return data.signedUrl
+  },
+
   // ── Teacher Attendance (kiosk check-in/out) ───────────────────────
 
   async getTodayAttendance(teacherId) {

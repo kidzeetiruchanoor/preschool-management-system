@@ -168,15 +168,17 @@ export default function KioskAttendance({ onExit }) {
         showResult({ type: 'error', message: `${teacherName} is already checked in today.`, teacherName })
         return
       }
-      showResult({ type: 'success', teacherName, action: 'Check In recorded', time: formatTime(row.check_in_time) })
+      const photoUrl = await DB.getKioskStaffPhotoUrl(teacherId).catch(() => null)
+      showResult({ type: 'success', teacherName, photoUrl, action: 'Check In recorded', time: formatTime(row.check_in_time) })
     } else {
       const row = await DB.checkOut(teacherId)
       if (!row) {
         showResult({ type: 'error', message: `${teacherName} has not checked in today, or has already checked out.`, teacherName })
         return
       }
+      const photoUrl = await DB.getKioskStaffPhotoUrl(teacherId).catch(() => null)
       showResult({
-        type: 'success', teacherName, action: 'Check Out recorded',
+        type: 'success', teacherName, photoUrl, action: 'Check Out recorded',
         time: formatTime(row.check_out_time), workingHours: row.working_hours,
       })
     }
@@ -272,10 +274,10 @@ export default function KioskAttendance({ onExit }) {
 
       {phase === 'result' && result && (
         <Overlay>
-          <div style={{ fontSize: 56, marginBottom: 16 }}>{result.type === 'success' ? '✅' : '⚠️'}</div>
           {result.type === 'success' ? (
             <>
-              <div style={{ fontFamily: "'DM Serif Display'", fontSize: 28, color: C.teal, marginBottom: 6 }}>
+              <Avatar photoUrl={result.photoUrl} name={result.teacherName} />
+              <div style={{ fontFamily: "'DM Serif Display'", fontSize: 28, color: C.teal, marginBottom: 6, marginTop: 16 }}>
                 Welcome, {result.teacherName}!
               </div>
               <div style={{ fontSize: 18, fontWeight: 600, color: C.success, marginBottom: 4 }}>
@@ -291,9 +293,12 @@ export default function KioskAttendance({ onExit }) {
               )}
             </>
           ) : (
-            <div style={{ fontSize: 18, color: C.danger, fontWeight: 600, maxWidth: 360 }}>
-              {result.message}
-            </div>
+            <>
+              <div style={{ fontSize: 56, marginBottom: 16 }}>⚠️</div>
+              <div style={{ fontSize: 18, color: C.danger, fontWeight: 600, maxWidth: 360 }}>
+                {result.message}
+              </div>
+            </>
           )}
         </Overlay>
       )}
@@ -302,6 +307,32 @@ export default function KioskAttendance({ onExit }) {
 }
 
 // ── Small helpers ───────────────────────────────────────────────
+
+function Avatar({ photoUrl, name }) {
+  const initial = (name || '?').trim().charAt(0).toUpperCase()
+  const size = 96
+  if (photoUrl) {
+    return (
+      <img
+        src={photoUrl}
+        alt={name}
+        style={{
+          width: size, height: size, borderRadius: '50%', objectFit: 'cover',
+          border: `3px solid ${C.teal}`, boxShadow: '0 4px 14px rgba(0,0,0,.15)',
+        }}
+      />
+    )
+  }
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: '50%', background: C.tealLight,
+      border: `3px solid ${C.teal}`, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: 36, fontWeight: 700, color: C.teal, fontFamily: "'DM Serif Display'",
+    }}>
+      {initial}
+    </div>
+  )
+}
 
 function Overlay({ children }) {
   return (
