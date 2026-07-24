@@ -546,12 +546,14 @@ export const DB = {
 
     // Also mark this teacher "present" in the original attendance table
     // (used by Staff Attendance reports / Today's Tasks), so an admin
-    // doesn't need to separately mark them present by hand. Best-effort —
-    // if this secondary write fails for any reason, the check-in itself
-    // has already succeeded and should not be treated as a failure.
-    const synced = await this.setAttendance('staff', teacherId, todayStr, 'present')
-    if (!synced) {
-      console.error('Kiosk check-in succeeded but syncing to attendance table failed — see setAttendance error above.')
+    // doesn't need to separately mark them present by hand. Uses a
+    // SECURITY DEFINER RPC function rather than a direct write — the
+    // kiosk's own RLS permissions on `attendance` proved unreliable to
+    // compose correctly with the existing admin policy, so this
+    // sidesteps that entirely with one narrow, purpose-built function.
+    const { error: syncError } = await supabase.rpc('mark_staff_present_from_kiosk', { p_teacher_id: teacherId })
+    if (syncError) {
+      console.error('Kiosk check-in succeeded but syncing to attendance table failed:', syncError)
     }
 
     return data
