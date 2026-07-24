@@ -274,6 +274,7 @@ export const DB = {
     const { error } = await supabase.from('attendance')
       .upsert({ entity_type: entityType, entity_id: entityId, date, status },
                { onConflict: 'entity_type,entity_id,date' })
+    if (error) console.error('setAttendance failed:', error)
     return !error
   },
 
@@ -548,10 +549,9 @@ export const DB = {
     // doesn't need to separately mark them present by hand. Best-effort —
     // if this secondary write fails for any reason, the check-in itself
     // has already succeeded and should not be treated as a failure.
-    try {
-      await this.setAttendance('staff', teacherId, todayStr, 'present')
-    } catch (syncErr) {
-      console.error('Could not sync attendance table after kiosk check-in:', syncErr)
+    const synced = await this.setAttendance('staff', teacherId, todayStr, 'present')
+    if (!synced) {
+      console.error('Kiosk check-in succeeded but syncing to attendance table failed — see setAttendance error above.')
     }
 
     return data
