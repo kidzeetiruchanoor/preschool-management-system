@@ -576,7 +576,7 @@ export const DB = {
 
   async getAttendanceForDate(dateStr) {
     const { data, error } = await supabase.from('teacher_attendance')
-      .select('*, staff:teacher_id (name, role)')
+      .select('*, staff(name, role)')
       .eq('attendance_date', dateStr)
       .order('check_in_time')
     if (error) { console.error(error); return [] }
@@ -586,7 +586,7 @@ export const DB = {
   async getAttendanceForMonth(yearMonth) {
     // yearMonth: "YYYY-MM"
     const { data, error } = await supabase.from('teacher_attendance')
-      .select('*, staff:teacher_id (name, role)')
+      .select('*, staff(name, role)')
       .gte('attendance_date', `${yearMonth}-01`)
       .lte('attendance_date', `${yearMonth}-31`)
       .order('attendance_date')

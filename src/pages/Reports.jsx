@@ -3,6 +3,7 @@ import { C } from '../lib/styles'
 import { CLASSES, EXPENSE_CATS, ENQUIRY_STATUS_COLOR, isDaycare } from '../lib/constants'
 import { fmt, currentYM, monthLabel, academicYearOptions, academicYearMonths, dateToYM, attDateRange, exportCSV } from '../lib/utils'
 import { Badge, Pill, Card, Select, Btn, EmptyState, ProgressBar } from '../components/ui'
+import TeacherAttendanceReport from '../components/TeacherAttendanceReport'
 
 function FeeReport({ students, feeRecords }) {
   const [ay, setAy] = useState(() => { const d=new Date(),y=d.getFullYear(),m=d.getMonth()+1,sy=m>=5?y:y-1; return `${sy}-${String((sy+1)%100).padStart(2,'0')}` })
@@ -209,7 +210,7 @@ function SalaryReport({ teachers, salaryRecords }) {
   )
 }
 
-const SUB_TABS = [{id:'fee',label:'Fee'},{id:'expense',label:'Expense'},{id:'admission',label:'Admission'},{id:'attendance',label:'Attendance'},{id:'salary',label:'Salary'}]
+const SUB_TABS = [{id:'fee',label:'Fee'},{id:'expense',label:'Expense'},{id:'admission',label:'Admission'},{id:'attendance',label:'Attendance'},{id:'salary',label:'Salary'},{ id: 'teacherKiosk', label: 'Staff Kiosk' }]
 
 export default function Reports({ students, teachers, feeRecords, salaryRecords, expenses, attendance, enquiries }) {
   const [sub, setSub] = useState('fee')
@@ -224,6 +225,7 @@ export default function Reports({ students, teachers, feeRecords, salaryRecords,
       {sub === 'admission'  && <AdmissionReport students={students} enquiries={enquiries} />}
       {sub === 'attendance' && <AttendanceReport students={students} attendance={attendance} />}
       {sub === 'salary'     && <SalaryReport teachers={teachers} salaryRecords={salaryRecords} />}
+      {sub === 'teacherKiosk' && <TeacherAttendanceReport teachers={teachers} />}
     </div>
   )
 }
