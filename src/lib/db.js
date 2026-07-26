@@ -301,6 +301,22 @@ export const DB = {
     return error ? null : mapFeeRecord(data)
   },
 
+  // Corrects a mistake on an existing payment (wrong amount, date,
+  // mode, etc). Deliberately does NOT touch receipt_no — the receipt
+  // stays tied to the same payment, just corrected, rather than
+  // generating a new one as if this were a brand new transaction.
+  async updateFeePayment(id, payForm) {
+    const { data, error } = await supabase.from('fee_payments').update({
+      amount:              +payForm.amount,
+      payment_date:        payForm.date,
+      payment_mode:        payForm.paymentMode,
+      transaction_id:      payForm.transactionId || null,
+      note:                payForm.note || null,
+      academic_year_label: getAcademicYear(payForm.date),
+    }).eq('id', id).select().single()
+    return error ? null : mapFeeRecord(data)
+  },
+
   async deleteFeePayment(id) {
     const { error } = await supabase.from('fee_payments').delete().eq('id', id)
     return !error

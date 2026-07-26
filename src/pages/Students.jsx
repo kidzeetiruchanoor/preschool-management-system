@@ -3,7 +3,7 @@ import { C } from '../lib/styles'
 import { DB } from '../lib/db'
 import { CLASSES, STUDENT_STATUSES, STUDENT_STATUS_COLOR, isDaycare } from '../lib/constants'
 import { fmt, today, currentAcademicYear, academicYearOptions, monthLabel } from '../lib/utils'
-import { Badge, Btn, Input, Select, Card, Modal, EmptyState, Pill } from '../components/ui'
+import { Badge, Btn, Input, Select, Card, Modal, EmptyState } from '../components/ui'
 import DocumentUpload from '../components/DocumentUpload'
 import DocumentList from '../components/DocumentList'
 
@@ -98,6 +98,7 @@ function StudentsTable({ students, setStudents, convertEnquiry, onConvertDone })
   const [modal, setModal] = useState(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('Active')
+  const [classFilter, setClassFilter] = useState('All')
 
   useEffect(() => {
     if (convertEnquiry) {
@@ -115,6 +116,7 @@ function StudentsTable({ students, setStudents, convertEnquiry, onConvertDone })
 
   const filtered = students.filter(s =>
     (statusFilter === 'All' || s.status === statusFilter) &&
+    (classFilter === 'All' || s.section === classFilter) &&
     (s.name.toLowerCase().includes(search.toLowerCase()) ||
      s.fatherName?.toLowerCase().includes(search.toLowerCase()) ||
      s.motherName?.toLowerCase().includes(search.toLowerCase()) ||
@@ -129,13 +131,6 @@ function StudentsTable({ students, setStudents, convertEnquiry, onConvertDone })
     else setStudents(prev => prev.map(s => s.id === result.id ? result : s))
     setModal(null)
   }
-
-  const setStatus = async (id, status) => {
-    await DB.setStudentStatus(id, status)
-    setStudents(prev => prev.map(s => s.id === id ? { ...s, status } : s))
-  }
-
-  
 
   return (
     <div>
@@ -157,16 +152,18 @@ function StudentsTable({ students, setStudents, convertEnquiry, onConvertDone })
           <Btn onClick={() => setModal({ mode:'add', data: blankStudent() })}>+ Add Student</Btn>
         </div>
       </div>
-      <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap' }}>
+      <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap', alignItems:'flex-end' }}>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name, parent, roll no..."
           style={{ flex:1, minWidth:180, padding:'8px 12px', borderRadius:8, border:`1.5px solid ${C.border}`, fontSize:14, outline:'none' }} />
-        <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-          <Pill active={statusFilter==='Active'} onClick={() => setStatusFilter('Active')}>Active</Pill>
-          {STUDENT_STATUSES.filter(s=>s!=='Active').map(s => (
-            <Pill key={s} active={statusFilter===s} onClick={() => setStatusFilter(s)}>{s}</Pill>
-          ))}
-          <Pill active={statusFilter==='All'} onClick={() => setStatusFilter('All')}>All</Pill>
-        </div>
+        <Select label="Class" value={classFilter} onChange={e => setClassFilter(e.target.value)}>
+          <option value="All">All Classes</option>
+          {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+        </Select>
+        <Select label="Status" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+          <option value="Active">Active</option>
+          {STUDENT_STATUSES.filter(s => s !== 'Active').map(s => <option key={s} value={s}>{s}</option>)}
+          <option value="All">All</option>
+        </Select>
       </div>
       {filtered.length === 0 ? <EmptyState msg="No students found." /> :
         <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
@@ -188,12 +185,8 @@ function StudentsTable({ students, setStudents, convertEnquiry, onConvertDone })
                     {isDaycare(s.section) ? `${fmt(s.monthlyFee)}/mo` : `${fmt(s.annualFee)}/year`}
                   </div>
                 </div>
-                <div style={{ display:'flex', flexDirection:'column', gap:6, flexShrink:0, alignItems:'flex-end' }}>
+                <div style={{ display:'flex', flexShrink:0 }}>
                   <Btn small variant="ghost" onClick={() => setModal({ mode:'edit', data: { ...s } })}>Edit</Btn>
-                  <select value={s.status} onChange={e => setStatus(s.id, e.target.value)}
-                    style={{ padding:'5px 10px', borderRadius:8, border:`1.5px solid ${STUDENT_STATUS_COLOR[s.status] || C.border}`, fontSize:12, fontWeight:600, color: STUDENT_STATUS_COLOR[s.status] || C.muted, background:'#fff', cursor:'pointer' }}>
-                    {STUDENT_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
-                  </select>
                 </div>
               </div>
             </Card>

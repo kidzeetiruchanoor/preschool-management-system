@@ -42,9 +42,11 @@ export default function Fees({ students, feeRecords, setFeeRecords, onOpenReceip
   const [cls, setCls] = useState('All')
   const [monthFilter, setMonthFilter] = useState('All')
   const [payModal, setPayModal] = useState(null)
+  const [editModal, setEditModal] = useState(null)
   const [gridModal, setGridModal] = useState(null)
   const [histModal, setHistModal] = useState(null)
   const [payForm, setPayForm] = useState({ date: today(), amount:'', note:'', paymentMode:'PhonePe', transactionId:'' })
+  const [editForm, setEditForm] = useState({ date: today(), amount:'', note:'', paymentMode:'PhonePe', transactionId:'' })
 
   const active = students.filter(s => s.status === 'Active')
   const classFiltered = cls === 'All' ? active : active.filter(s => s.section === cls)
@@ -73,6 +75,22 @@ export default function Fees({ students, feeRecords, setFeeRecords, onOpenReceip
   const deletePayment = async id => {
     await DB.deleteFeePayment(id)
     setFeeRecords(prev => prev.filter(r => r.id !== id))
+  }
+
+  const openEditModal = (record, student) => {
+    setEditForm({
+      date: record.date, amount: String(record.amount), note: record.note || '',
+      paymentMode: record.paymentMode, transactionId: record.transactionId || '',
+    })
+    setEditModal({ record, student })
+  }
+
+  const saveEdit = async () => {
+    if (!editForm.amount || +editForm.amount <= 0) return alert('Enter a valid amount')
+    const updated = await DB.updateFeePayment(editModal.record.id, editForm)
+    if (!updated) return alert('Could not save changes. Please try again.')
+    setFeeRecords(prev => prev.map(r => r.id === updated.id ? updated : r))
+    setEditModal(null)
   }
 
   return (
@@ -165,6 +183,7 @@ export default function Fees({ students, feeRecords, setFeeRecords, onOpenReceip
                         <span style={{ color: C.teal, fontWeight:600 }}>{fmt(r.amount)}</span>
                         <span style={{ color: C.muted }}>{r.date} · {r.paymentMode}</span>
                         <button onClick={() => onOpenReceipt && onOpenReceipt(r, s)} style={{ background:'none', border:'none', color: C.amber, cursor:'pointer', fontSize:11, fontWeight:700, textDecoration:'underline' }}>Receipt</button>
+                        <button onClick={() => openEditModal(r, s)} style={{ background:'none', border:'none', color: C.teal, cursor:'pointer', fontSize:11, fontWeight:700, textDecoration:'underline' }}>Edit</button>
                         <button onClick={() => deletePayment(r.id)} style={{ background:'none', border:'none', color: C.muted, cursor:'pointer', fontSize:12 }}>✕</button>
                       </div>
                     ))}
@@ -202,6 +221,27 @@ export default function Fees({ students, feeRecords, setFeeRecords, onOpenReceip
 
       {gridModal && <YearGridModal student={gridModal.student} feeRecords={feeRecords} ay={ay} onClose={() => setGridModal(null)} />}
 
+      {editModal && (
+        <Modal title={`Edit Payment — ${editModal.student.name}`} onClose={() => setEditModal(null)}>
+          <div style={{ marginBottom:14, padding:'10px 14px', background: C.tealLight, borderRadius:10, fontSize:12, color: C.muted }}>
+            Receipt No: <b style={{ color: C.text }}>{editModal.record.receiptNo}</b> — correcting this payment keeps the same receipt, it will not generate a new one.
+          </div>
+          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+            <Input label="Date of Payment" type="date" value={editForm.date} onChange={e => setEditForm(p=>({...p,date:e.target.value}))} />
+            <Input label="Amount Received (Rs.) *" type="number" value={editForm.amount} onChange={e => setEditForm(p=>({...p,amount:e.target.value}))} />
+            <Select label="Payment Mode" value={editForm.paymentMode} onChange={e => setEditForm(p=>({...p,paymentMode:e.target.value}))}>
+              {PAYMENT_MODES.map(m => <option key={m} value={m}>{m}</option>)}
+            </Select>
+            <Input label="Transaction ID (optional)" value={editForm.transactionId} onChange={e => setEditForm(p=>({...p,transactionId:e.target.value}))} />
+            <Input label="Note (optional)" value={editForm.note} onChange={e => setEditForm(p=>({...p,note:e.target.value}))} />
+            <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:8 }}>
+              <Btn variant="ghost" onClick={() => setEditModal(null)}>Cancel</Btn>
+              <Btn onClick={saveEdit}>Save Changes</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {histModal && (
         <Modal title={`Payment History — ${histModal.student.name}`} onClose={() => setHistModal(null)}>
           <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
@@ -213,6 +253,7 @@ export default function Fees({ students, feeRecords, setFeeRecords, onOpenReceip
                 </div>
                 <div style={{ display:'flex', gap:6 }}>
                   <Btn small variant="amber" onClick={() => onOpenReceipt && onOpenReceipt(r, histModal.student)}>Receipt</Btn>
+                  <Btn small variant="ghost" onClick={() => openEditModal(r, histModal.student)}>Edit</Btn>
                   <Btn small variant="danger" onClick={() => deletePayment(r.id)}>Delete</Btn>
                 </div>
               </div>
