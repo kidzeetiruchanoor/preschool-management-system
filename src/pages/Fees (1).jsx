@@ -253,7 +253,7 @@ export default function Fees({ students, feeRecords, setFeeRecords, onOpenReceip
                 </div>
                 <div style={{ display:'flex', gap:6 }}>
                   <Btn small variant="amber" onClick={() => onOpenReceipt && onOpenReceipt(r, histModal.student)}>Receipt</Btn>
-                  <Btn small variant="ghost" onClick={() => openEditModal(r, histModal.student)}>Edit</Btn>
+                  <Btn small variant="ghost" onClick={() => { openEditModal(r, histModal.student); setHistModal(null) }}>Edit</Btn>
                   <Btn small variant="danger" onClick={() => deletePayment(r.id)}>Delete</Btn>
                 </div>
               </div>
