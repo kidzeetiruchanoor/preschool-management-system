@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { C } from '../lib/styles'
 
-export default function KioskWelcome({ connecting, error, onStaffAttendance, onAdminLogin }) {
+export default function KioskWelcome({ connecting, error, onStaffAttendance }) {
   const [now, setNow] = useState(new Date())
 
   useEffect(() => {
@@ -37,17 +37,6 @@ export default function KioskWelcome({ connecting, error, onStaffAttendance, onA
           }}
         >
           {connecting ? 'Connecting...' : '📋 Staff Attendance'}
-        </button>
-
-        <button
-          onClick={onAdminLogin}
-          style={{
-            padding: '14px 0', borderRadius: 14, border: `1.5px solid ${C.border}`,
-            background: 'transparent', color: C.muted,
-            fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-          }}
-        >
-          Admin Login
         </button>
       </div>
 
