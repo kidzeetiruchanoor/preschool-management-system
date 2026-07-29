@@ -15,6 +15,7 @@ import Fees from './pages/Fees'
 import Teachers from './pages/Teachers'
 import Expenses from './pages/Expenses'
 import Reports from './pages/Reports'
+import Inventory from './pages/Inventory'
 
 const TABS = [
   { id:'tasks',      label:'Today' },
@@ -25,6 +26,7 @@ const TABS = [
   { id:'fees',       label:'Fees' },
   { id:'teachers',   label:'Staff' },
   { id:'expenses',   label:'Expenses' },
+  { id:'inventory',  label:'Inventory' },
   { id:'reports',    label:'Reports' },
 ]
 
@@ -156,6 +158,7 @@ export default function App() {
         {tab === 'fees'       && <Fees students={students} feeRecords={feeRecords} setFeeRecords={setFeeRecords} onOpenReceipt={openReceipt} />}
         {tab === 'teachers'   && <Teachers teachers={teachers} setTeachers={setTeachers} salaryRecords={salaryRecords} setSalaryRecords={setSalaryRecords} expenses={expenses} setExpenses={setExpenses} />}
         {tab === 'expenses'   && <Expenses expenses={expenses} setExpenses={setExpenses} />}
+        {tab === 'inventory'  && <Inventory />}
         {tab === 'reports'    && <Reports students={students} teachers={teachers} feeRecords={feeRecords} salaryRecords={salaryRecords} expenses={expenses} attendance={attendance} enquiries={enquiries} />}
       </div>
 
