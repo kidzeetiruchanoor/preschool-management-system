@@ -23,6 +23,7 @@ function StockReceipt() {
   const [variants, setVariants] = useState([])
   const [receipts, setReceipts] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [header, setHeader] = useState({
     date: today(), supplier: '', invoiceNumber: '', remarks: '',
   })
@@ -32,14 +33,24 @@ function StockReceipt() {
   const ay = getCurrentAY()
 
   const load = async () => {
+    setLoading(true)
+    setLoadError('')
     if (!ay) { setLoading(false); return }
-    const [v, r] = await Promise.all([
-      DB.getInventoryVariants(ay.id),
-      DB.getStockReceipts(ay.id),
-    ])
-    setVariants(v)
-    setReceipts(r)
-    setLoading(false)
+    try {
+      const [v, r] = await Promise.all([
+        DB.getInventoryVariants(ay.id),
+        DB.getStockReceipts(ay.id),
+      ])
+      setVariants(v)
+      setReceipts(r)
+    } catch (err) {
+      console.error('Inventory load failed:', err)
+      setLoadError(err.message || 'Could not load inventory data.')
+    } finally {
+      // Always runs, whether the calls above succeeded, returned an
+      // error, or threw — this is what prevents an infinite spinner.
+      setLoading(false)
+    }
   }
   useEffect(() => { load() }, [])
 
@@ -73,6 +84,17 @@ function StockReceipt() {
   }
 
   if (loading) return <EmptyState msg="Loading inventory..." />
+
+  if (loadError) {
+    return (
+      <Card style={{ padding: 20, textAlign: 'center' }}>
+        <div style={{ color: C.danger, fontWeight: 600, marginBottom: 10 }}>Could not load inventory data</div>
+        <div style={{ fontSize: 13, color: C.muted, marginBottom: 14 }}>{loadError}</div>
+        <Btn small onClick={load}>Try Again</Btn>
+      </Card>
+    )
+  }
+
   if (!ay) return <EmptyState msg="No active academic year configured." />
 
   return (
