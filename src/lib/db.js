@@ -609,4 +609,63 @@ export const DB = {
     if (error) { console.error(error); return [] }
     return data
   },
+
+  // ── Inventory (Phase 6a) ───────────────────────────────────────────
+  async getInventoryCategories() {
+    const { data, error } = await supabase.from('inventory_categories').select('*').order('sort_order')
+    if (error) { console.error(error); return [] }
+    return data
+  },
+
+  async getInventoryItems() {
+    const { data, error } = await supabase.from('inventory_items').select('*, inventory_categories(name)').eq('is_active', true)
+    if (error) { console.error(error); return [] }
+    return data
+  },
+
+  async getInventoryVariants(academicYearId) {
+    // Includes item + category info so the UI can group/label without
+    // extra round trips. One call loads everything needed for both the
+    // Stock Receipt form and (later) the Current Inventory page.
+    const { data, error } = await supabase
+      .from('inventory_variants')
+      .select('*, inventory_items(name, category_id, low_stock_threshold, default_issue_qty, inventory_categories(name, is_bundle, has_variants))')
+      .eq('academic_year_id', academicYearId)
+    if (error) { console.error(error); return [] }
+    return data
+  },
+
+  async getBundleComponents(itemId) {
+    const { data, error } = await supabase
+      .from('inventory_bundle_components')
+      .select('*')
+      .eq('item_id', itemId)
+      .order('sort_order')
+    if (error) { console.error(error); return [] }
+    return data
+  },
+
+  async createStockReceipt(receipt, lineItems) {
+    // lineItems: [{ variantId, quantity }]
+    const { data, error } = await supabase.rpc('create_stock_receipt', {
+      p_receipt_date: receipt.date,
+      p_supplier: receipt.supplier || null,
+      p_invoice_number: receipt.invoiceNumber || null,
+      p_academic_year_id: receipt.academicYearId,
+      p_remarks: receipt.remarks || null,
+      p_line_items: lineItems.map(li => ({ variant_id: li.variantId, quantity: li.quantity })),
+    })
+    if (error) { console.error(error); return null }
+    return data // the new receipt's id
+  },
+
+  async getStockReceipts(academicYearId) {
+    const { data, error } = await supabase
+      .from('stock_receipts')
+      .select('*, stock_receipt_items(*, inventory_variants(variant_label, inventory_items(name)))')
+      .eq('academic_year_id', academicYearId)
+      .order('receipt_date', { ascending: false })
+    if (error) { console.error(error); return [] }
+    return data
+  },
 }
