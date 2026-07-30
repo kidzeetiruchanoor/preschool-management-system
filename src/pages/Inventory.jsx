@@ -5,6 +5,7 @@ import { today } from '../lib/utils'
 import { Btn, Input, Select, Card, EmptyState, Pill, Badge } from '../components/ui'
 
 const SUB_TABS = [
+  { id: 'dashboard',    label: 'Dashboard' },
   { id: 'receipt',      label: 'Stock Receipt' },
   { id: 'current',      label: 'Current Inventory' },
   { id: 'distribution', label: 'Distribution' },
@@ -16,6 +17,187 @@ const SUB_TABS = [
 // a blank/broken tab, so the full intended menu shape is visible now.
 function ComingSoon({ phase }) {
   return <EmptyState msg={`This section is planned for ${phase} — not built yet.`} />
+}
+
+// ── Shared: fetch + group variants by category, with computed available/low-stock ──
+function useVariantData(academicYearId) {
+  const [variants, setVariants] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+
+  const load = async () => {
+    setLoading(true)
+    setLoadError('')
+    try {
+      const v = await DB.getInventoryVariants(academicYearId)
+      setVariants(v.map(x => ({
+        ...x,
+        available: x.received_qty - x.issued_qty,
+        lowStock: (x.received_qty - x.issued_qty) <= (x.inventory_items?.low_stock_threshold ?? 5),
+      })))
+    } catch (err) {
+      console.error('Inventory load failed:', err)
+      setLoadError(err.message || 'Could not load inventory data.')
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { if (academicYearId) load() }, [academicYearId])
+
+  return { variants, loading, loadError, reload: load }
+}
+
+// ── Dashboard ────────────────────────────────────────────────────
+function InventoryDashboard() {
+  const ay = getCurrentAY()
+  const { variants, loading, loadError, reload } = useVariantData(ay?.id)
+
+  if (!ay) return <EmptyState msg="No active academic year configured." />
+  if (loading) return <EmptyState msg="Loading inventory..." />
+  if (loadError) {
+    return (
+      <Card style={{ padding: 20, textAlign: 'center' }}>
+        <div style={{ color: C.danger, fontWeight: 600, marginBottom: 10 }}>Could not load inventory data</div>
+        <div style={{ fontSize: 13, color: C.muted, marginBottom: 14 }}>{loadError}</div>
+        <Btn small onClick={reload}>Try Again</Btn>
+      </Card>
+    )
+  }
+
+  const byCategory = {}
+  variants.forEach(v => {
+    const cat = v.inventory_items?.inventory_categories?.name || 'Other'
+    byCategory[cat] = byCategory[cat] || []
+    byCategory[cat].push(v)
+  })
+
+  const lowStockItems = variants.filter(v => v.lowStock && v.received_qty > 0)
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: C.muted, marginBottom: 16 }}>Academic Year {ay.label}</div>
+
+      {lowStockItems.length > 0 && (
+        <Card style={{ padding: 16, marginBottom: 20, background: '#FEF6E6', border: `1.5px solid ${C.amber}` }}>
+          <div style={{ fontWeight: 700, color: C.amber, fontSize: 14, marginBottom: 10 }}>⚠ Low Stock Warnings</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {lowStockItems.map(v => (
+              <div key={v.id} style={{ fontSize: 13, display: 'flex', justifyContent: 'space-between' }}>
+                <span>{v.inventory_items?.inventory_categories?.name} — {v.inventory_items?.name}{v.variant_label !== 'Standard' && ` (${v.variant_label})`}</span>
+                <b style={{ color: C.danger }}>{v.available} left</b>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {Object.entries(byCategory).map(([catName, catVariants]) => {
+        const isBundle = catVariants[0]?.inventory_items?.inventory_categories?.is_bundle
+        const totalReceived = catVariants.reduce((a, v) => a + v.received_qty, 0)
+        const totalIssued = catVariants.reduce((a, v) => a + v.issued_qty, 0)
+        const totalAvailable = totalReceived - totalIssued
+
+        return (
+          <Card key={catName} style={{ padding: 18, marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: C.teal, marginBottom: 12 }}>{catName}</div>
+
+            {isBundle ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(90px,1fr))', gap: 10 }}>
+                <MiniStat label="Received" value={totalReceived} />
+                <MiniStat label="Issued" value={totalIssued} />
+                <MiniStat label="Available" value={totalAvailable} color={totalAvailable <= 5 ? C.danger : C.success} />
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {catVariants.map(v => (
+                  <div key={v.id} style={{
+                    background: v.lowStock ? '#FEF6E6' : C.bg, border: `1px solid ${v.lowStock ? C.amber : C.border}`,
+                    borderRadius: 10, padding: '8px 12px', minWidth: 90,
+                  }}>
+                    <div style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>{v.variant_label}</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: v.lowStock ? C.danger : C.text }}>{v.available}</div>
+                    {v.lowStock && <div style={{ fontSize: 10, color: C.amber, fontWeight: 600 }}>⚠ Low</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        )
+      })}
+    </div>
+  )
+}
+
+function MiniStat({ label, value, color = C.text }) {
+  return (
+    <div style={{ background: C.bg, borderRadius: 8, padding: '10px 12px', textAlign: 'center' }}>
+      <div style={{ fontSize: 10, color: C.muted, fontWeight: 600, textTransform: 'uppercase' }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 700, color }}>{value}</div>
+    </div>
+  )
+}
+
+// ── Current Inventory (table with filters) ─────────────────────────
+function CurrentInventory() {
+  const ayList = getAYList()
+  const [selAyId, setSelAyId] = useState(getCurrentAY()?.id || '')
+  const [catFilter, setCatFilter] = useState('All')
+  const [lowStockOnly, setLowStockOnly] = useState(false)
+  const { variants, loading, loadError, reload } = useVariantData(selAyId)
+
+  const categories = [...new Set(variants.map(v => v.inventory_items?.inventory_categories?.name).filter(Boolean))]
+
+  const filtered = variants.filter(v =>
+    (catFilter === 'All' || v.inventory_items?.inventory_categories?.name === catFilter) &&
+    (!lowStockOnly || v.lowStock)
+  )
+
+  if (loading) return <EmptyState msg="Loading inventory..." />
+  if (loadError) {
+    return (
+      <Card style={{ padding: 20, textAlign: 'center' }}>
+        <div style={{ color: C.danger, fontWeight: 600, marginBottom: 10 }}>Could not load inventory data</div>
+        <div style={{ fontSize: 13, color: C.muted, marginBottom: 14 }}>{loadError}</div>
+        <Btn small onClick={reload}>Try Again</Btn>
+      </Card>
+    )
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 16 }}>
+        <Select label="Academic Year" value={selAyId} onChange={e => setSelAyId(e.target.value)}>
+          {ayList.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+        </Select>
+        <Select label="Category" value={catFilter} onChange={e => setCatFilter(e.target.value)}>
+          <option value="All">All Categories</option>
+          {categories.map(c => <option key={c} value={c}>{c}</option>)}
+        </Select>
+        <Pill active={lowStockOnly} onClick={() => setLowStockOnly(!lowStockOnly)}>Low Stock Only</Pill>
+      </div>
+
+      {filtered.length === 0 ? <EmptyState msg="No inventory items match this filter." /> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {filtered.map(v => (
+            <Card key={v.id} style={{ padding: '12px 16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>
+                    {v.inventory_items?.inventory_categories?.name} — {v.inventory_items?.name}
+                    {v.variant_label !== 'Standard' && <span style={{ color: C.muted, fontWeight: 400 }}> ({v.variant_label})</span>}
+                  </div>
+                  <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+                    Received: <b>{v.received_qty}</b> · Issued: <b>{v.issued_qty}</b> · Available: <b style={{ color: v.lowStock ? C.danger : C.success }}>{v.available}</b>
+                  </div>
+                </div>
+                {v.lowStock && <Badge color={C.amber}>Low Stock</Badge>}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ── Stock Receipt (functional in this phase) ───────────────────────
@@ -155,15 +337,16 @@ function StockReceipt() {
 
 // ── Root Inventory page ─────────────────────────────────────────────
 export default function Inventory() {
-  const [sub, setSub] = useState('receipt')
+  const [sub, setSub] = useState('dashboard')
   return (
     <div>
       <div style={{ fontFamily: "'DM Serif Display'", fontSize: 22, color: C.teal, marginBottom: 16 }}>Inventory</div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
         {SUB_TABS.map(t => <Pill key={t.id} active={sub === t.id} onClick={() => setSub(t.id)}>{t.label}</Pill>)}
       </div>
+      {sub === 'dashboard' && <InventoryDashboard />}
       {sub === 'receipt' && <StockReceipt />}
-      {sub === 'current' && <ComingSoon phase="Phase 6b" />}
+      {sub === 'current' && <CurrentInventory />}
       {sub === 'distribution' && <ComingSoon phase="Phase 6c" />}
       {sub === 'ledger' && <ComingSoon phase="Phase 6e" />}
       {sub === 'reports' && <ComingSoon phase="Phase 6d/6e" />}
