@@ -668,4 +668,33 @@ export const DB = {
     if (error) { console.error(error); return [] }
     return data
   },
+
+  async issueItemsToStudent(studentId, academicYearId, issueDate, remarks, lineItems) {
+    // lineItems: [{ variantId, quantity }]
+    // Returns { ok: true, issuanceId } on success, or { ok: false, error }
+    // with the exact reason (e.g. "Not enough stock for Uniform Set (Size 22)")
+    // so the UI can show the real cause instead of a generic failure.
+    const { data, error } = await supabase.rpc('issue_items_to_student', {
+      p_student_id: studentId,
+      p_academic_year_id: academicYearId,
+      p_issue_date: issueDate,
+      p_remarks: remarks || null,
+      p_line_items: lineItems.map(li => ({ variant_id: li.variantId, quantity: li.quantity })),
+    })
+    if (error) {
+      console.error(error)
+      return { ok: false, error: error.message || 'Could not issue items.' }
+    }
+    return { ok: true, issuanceId: data }
+  },
+ 
+  async getStudentIssuances(studentId) {
+    const { data, error } = await supabase
+      .from('student_issuances')
+      .select('*, student_issuance_items(*, inventory_variants(variant_label, inventory_items(name, inventory_categories(name))))')
+      .eq('student_id', studentId)
+      .order('issue_date', { ascending: false })
+    if (error) { console.error(error); return [] }
+    return data
+  },
 }

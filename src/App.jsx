@@ -158,7 +158,8 @@ export default function App() {
         {tab === 'fees'       && <Fees students={students} feeRecords={feeRecords} setFeeRecords={setFeeRecords} onOpenReceipt={openReceipt} />}
         {tab === 'teachers'   && <Teachers teachers={teachers} setTeachers={setTeachers} salaryRecords={salaryRecords} setSalaryRecords={setSalaryRecords} expenses={expenses} setExpenses={setExpenses} />}
         {tab === 'expenses'   && <Expenses expenses={expenses} setExpenses={setExpenses} />}
-        {tab === 'inventory'  && <Inventory />}
+        {tab === 'inventory'  && <Inventory students={students} />}
+
         {tab === 'reports'    && <Reports students={students} teachers={teachers} feeRecords={feeRecords} salaryRecords={salaryRecords} expenses={expenses} attendance={attendance} enquiries={enquiries} />}
       </div>
 
