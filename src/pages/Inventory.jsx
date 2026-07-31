@@ -336,7 +336,184 @@ function StockReceipt() {
 }
 
 // ── Root Inventory page ─────────────────────────────────────────────
-export default function Inventory() {
+// ── Student Distribution ─────────────────────────────────────────
+function StudentDistribution({ students }) {
+  const ay = getCurrentAY()
+  const { variants, loading, loadError, reload } = useVariantData(ay?.id)
+
+  const [studentId, setStudentId] = useState('')
+  const [issueKit, setIssueKit] = useState(false)
+  const [uniformSize, setUniformSize] = useState('')
+  const [uniformQty, setUniformQty] = useState(2)
+  const [shoesSize, setShoesSize] = useState('')
+  const [shoesQty, setShoesQty] = useState(1)
+  const [issueDate, setIssueDate] = useState(today())
+  const [remarks, setRemarks] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [issueError, setIssueError] = useState('')
+  const [issueSuccess, setIssueSuccess] = useState('')
+  const [priorIssuances, setPriorIssuances] = useState([])
+
+  const activeStudents = students.filter(s => s.status === 'Active')
+  const student = activeStudents.find(s => s.id === studentId)
+
+  const kitVariant = variants.find(v => v.inventory_items?.inventory_categories?.name === 'Student Kit')
+  const uniformVariants = variants.filter(v => v.inventory_items?.inventory_categories?.name === 'Uniform')
+  const shoesVariants = variants.filter(v => v.inventory_items?.inventory_categories?.name === 'Shoes')
+
+  useEffect(() => {
+    if (!studentId) { setPriorIssuances([]); return }
+    DB.getStudentIssuances(studentId).then(setPriorIssuances)
+  }, [studentId])
+
+  const alreadyIssuedKit = priorIssuances.some(i =>
+    i.student_issuance_items?.some(li => li.inventory_variants?.inventory_items?.inventory_categories?.name === 'Student Kit')
+  )
+
+  const resetForm = () => {
+    setIssueKit(false); setUniformSize(''); setUniformQty(2)
+    setShoesSize(''); setShoesQty(1); setRemarks('')
+  }
+
+  const submit = async () => {
+    setIssueError(''); setIssueSuccess('')
+    if (!student) return setIssueError('Select a student first.')
+
+    const lineItems = []
+    if (issueKit && kitVariant) lineItems.push({ variantId: kitVariant.id, quantity: 1 })
+    if (uniformSize && +uniformQty > 0) lineItems.push({ variantId: uniformSize, quantity: +uniformQty })
+    if (shoesSize && +shoesQty > 0) lineItems.push({ variantId: shoesSize, quantity: +shoesQty })
+
+    if (lineItems.length === 0) return setIssueError('Select at least one item to issue.')
+
+    setSaving(true)
+    const result = await DB.issueItemsToStudent(student.id, ay.id, issueDate, remarks, lineItems)
+    setSaving(false)
+
+    if (!result.ok) { setIssueError(result.error); return }
+
+    setIssueSuccess(`Items issued to ${student.name}.`)
+    resetForm()
+    reload()
+    DB.getStudentIssuances(studentId).then(setPriorIssuances)
+  }
+
+  if (!ay) return <EmptyState msg="No active academic year configured." />
+  if (loading) return <EmptyState msg="Loading inventory..." />
+  if (loadError) {
+    return (
+      <Card style={{ padding: 20, textAlign: 'center' }}>
+        <div style={{ color: C.danger, fontWeight: 600, marginBottom: 10 }}>Could not load inventory data</div>
+        <div style={{ fontSize: 13, color: C.muted, marginBottom: 14 }}>{loadError}</div>
+        <Btn small onClick={reload}>Try Again</Btn>
+      </Card>
+    )
+  }
+
+  return (
+    <div>
+      <Card style={{ padding: 18 }}>
+        <Select label="Select Student" value={studentId} onChange={e => { setStudentId(e.target.value); setIssueError(''); setIssueSuccess('') }} style={{ marginBottom: 14 }}>
+          <option value="">Choose a student...</option>
+          {activeStudents.map(s => <option key={s.id} value={s.id}>{s.name} · {s.rollNo}</option>)}
+        </Select>
+
+        {student && (
+          <>
+            <div style={{ background: C.tealLight, borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: C.muted }}>
+              <b style={{ color: C.text }}>{student.name}</b> · Admission No: {student.admissionNo} · Class: {student.section} · AY {ay.label}
+            </div>
+
+            {alreadyIssuedKit && (
+              <div style={{ fontSize: 12, color: C.amber, marginBottom: 12, fontWeight: 600 }}>
+                ⚠ This student has already been issued a Student Kit this academic year.
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* Student Kit */}
+              <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>Student Kit</div>
+                {kitVariant ? (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={issueKit} onChange={e => setIssueKit(e.target.checked)} disabled={kitVariant.available <= 0} />
+                    Issue Student Kit {kitVariant.available <= 0 && <span style={{ color: C.danger }}>(Out of stock)</span>}
+                  </label>
+                ) : <div style={{ fontSize: 12, color: C.muted }}>No Student Kit configured.</div>}
+              </div>
+
+              {/* Uniform */}
+              <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>Uniform</div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <Select label="Size" value={uniformSize} onChange={e => setUniformSize(e.target.value)}>
+                    <option value="">Not issuing</option>
+                    {uniformVariants.map(v => (
+                      <option key={v.id} value={v.id} disabled={v.available <= 0}>
+                        {v.variant_label} {v.available <= 0 ? '(Out of stock)' : `(${v.available} available)`}
+                      </option>
+                    ))}
+                  </Select>
+                  <Input label="Quantity" type="number" value={uniformQty} onChange={e => setUniformQty(e.target.value)} style={{ width: 90 }} />
+                </div>
+              </div>
+
+              {/* Shoes */}
+              <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>Shoes</div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <Select label="Size" value={shoesSize} onChange={e => setShoesSize(e.target.value)}>
+                    <option value="">Not issuing</option>
+                    {shoesVariants.map(v => (
+                      <option key={v.id} value={v.id} disabled={v.available <= 0}>
+                        {v.variant_label} {v.available <= 0 ? '(Out of stock)' : `(${v.available} available)`}
+                      </option>
+                    ))}
+                  </Select>
+                  <Input label="Quantity" type="number" value={shoesQty} onChange={e => setShoesQty(e.target.value)} style={{ width: 90 }} />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 10 }}>
+                <Input label="Issue Date" type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} />
+                <Input label="Remarks (optional)" value={remarks} onChange={e => setRemarks(e.target.value)} />
+              </div>
+
+              {issueError && <div style={{ fontSize: 13, color: C.danger, fontWeight: 600 }}>{issueError}</div>}
+              {issueSuccess && <div style={{ fontSize: 13, color: C.success, fontWeight: 600 }}>{issueSuccess}</div>}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Btn onClick={submit} disabled={saving}>{saving ? 'Issuing...' : 'Issue Items'}</Btn>
+              </div>
+            </div>
+          </>
+        )}
+      </Card>
+
+      {student && priorIssuances.length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <div style={{ fontFamily: "'DM Serif Display'", fontSize: 16, color: C.teal, marginBottom: 10 }}>Prior Issuances</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {priorIssuances.map(iss => (
+              <Card key={iss.id} style={{ padding: '10px 14px' }}>
+                <div style={{ fontSize: 12, color: C.muted, marginBottom: 4 }}>{iss.issue_date}{iss.remarks && ` · ${iss.remarks}`}</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {(iss.student_issuance_items || []).map(li => (
+                    <Badge key={li.id} color={C.teal} bg={C.tealLight}>
+                      {li.inventory_variants?.inventory_items?.name}{li.inventory_variants?.variant_label !== 'Standard' && ` (${li.inventory_variants?.variant_label})`} × {li.quantity}
+                    </Badge>
+                  ))}
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function Inventory({ students }) {
   const [sub, setSub] = useState('dashboard')
   return (
     <div>
@@ -347,7 +524,7 @@ export default function Inventory() {
       {sub === 'dashboard' && <InventoryDashboard />}
       {sub === 'receipt' && <StockReceipt />}
       {sub === 'current' && <CurrentInventory />}
-      {sub === 'distribution' && <ComingSoon phase="Phase 6c" />}
+      {sub === 'distribution' && <StudentDistribution students={students} />}
       {sub === 'ledger' && <ComingSoon phase="Phase 6e" />}
       {sub === 'reports' && <ComingSoon phase="Phase 6d/6e" />}
     </div>
