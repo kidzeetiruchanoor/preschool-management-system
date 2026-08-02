@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { C } from '../lib/styles'
 import { DB, getCurrentAY, getAYList } from '../lib/db'
+import { CLASSES } from '../lib/constants'
 import { today } from '../lib/utils'
 import { Btn, Input, Select, Card, EmptyState, Pill, Badge } from '../components/ui'
 
@@ -513,6 +514,67 @@ function StudentDistribution({ students }) {
   )
 }
 
+// ── Pending Distribution Report ─────────────────────────────────
+const REQUIRED_CATEGORIES = ['Student Kit', 'Uniform', 'Shoes']
+
+function PendingDistribution({ students }) {
+  const ay = getCurrentAY()
+  const [issuances, setIssuances] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!ay) return
+    DB.getAllIssuancesForAY(ay.id).then(data => {
+      setIssuances(data)
+      setLoading(false)
+    })
+  }, [ay?.id])
+
+  if (!ay) return <EmptyState msg="No active academic year configured." />
+  if (loading) return <EmptyState msg="Loading..." />
+
+  const receivedByStudent = {}
+  issuances.forEach(iss => {
+    const cats = (iss.student_issuance_items || [])
+      .map(li => li.inventory_variants?.inventory_items?.inventory_categories?.name)
+      .filter(Boolean)
+    receivedByStudent[iss.student_id] = receivedByStudent[iss.student_id] || new Set()
+    cats.forEach(c => receivedByStudent[iss.student_id].add(c))
+  })
+
+  const activeStudents = students.filter(s => s.status === 'Active')
+  const withPending = activeStudents.map(s => {
+    const received = receivedByStudent[s.id] || new Set()
+    const pending = REQUIRED_CATEGORIES.filter(c => !received.has(c))
+    return { ...s, pending }
+  }).filter(s => s.pending.length > 0)
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: C.muted, marginBottom: 16 }}>
+        {withPending.length} of {activeStudents.length} active students have pending items — AY {ay.label}
+      </div>
+      {withPending.length === 0 ? <EmptyState msg="Everyone is fully issued. Nothing pending." /> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {withPending.map(s => (
+            <Card key={s.id} style={{ padding: '12px 16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{s.name} <span style={{ fontSize: 12, color: C.muted, fontWeight: 400 }}>· {s.section} · {s.admissionNo}</span></div>
+                  {s.fatherPhone && <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>Parent: {s.fatherPhone}</div>}
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {s.pending.map(p => <Badge key={p} color={C.danger} bg="#F8D7D2">{p}</Badge>)}
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Inventory({ students }) {
   const [sub, setSub] = useState('dashboard')
   return (
@@ -526,7 +588,7 @@ export default function Inventory({ students }) {
       {sub === 'current' && <CurrentInventory />}
       {sub === 'distribution' && <StudentDistribution students={students} />}
       {sub === 'ledger' && <ComingSoon phase="Phase 6e" />}
-      {sub === 'reports' && <ComingSoon phase="Phase 6d/6e" />}
+      {sub === 'reports' && <PendingDistribution students={students} />}
     </div>
   )
 }

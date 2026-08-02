@@ -6,6 +6,8 @@ import { fmt, today, currentAcademicYear, academicYearOptions, monthLabel } from
 import { Badge, Btn, Input, Select, Card, Modal, EmptyState } from '../components/ui'
 import DocumentUpload from '../components/DocumentUpload'
 import DocumentList from '../components/DocumentList'
+import StudentInventoryTab from '../components/StudentInventoryTab'
+
 
 const blankStudent = () => ({
   id: null, admissionNo:'', rollNo:'', name:'', dob:'', section:'Playgroup', aadhaar:'',
@@ -67,6 +69,9 @@ function StudentModal({ modal, onClose, onSubmit }) {
               onUploaded={() => setDocsRefresh(n => n + 1)}
             />
             <DocumentList entityType="student" entityId={d.id} refreshKey={docsRefresh} />
+           <div style={{ marginTop: 12 }}>
+             <StudentInventoryTab studentId={d.id} />
+           </div>
           </div>
         ) : (
           <div style={{ fontSize:12, color: C.muted, background: C.hover, padding:'10px 12px', borderRadius:8 }}>

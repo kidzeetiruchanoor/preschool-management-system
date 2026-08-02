@@ -697,4 +697,17 @@ export const DB = {
     if (error) { console.error(error); return [] }
     return data
   },
+  // Used by the Pending Distribution report — one query gets every
+  // issuance for the academic year, with just enough nested info to
+  // tell which categories (Student Kit / Uniform / Shoes) each
+  // student has already received. Grouping by student happens
+  // client-side in the report component.
+  async getAllIssuancesForAY(academicYearId) {
+    const { data, error } = await supabase
+      .from('student_issuances')
+      .select('student_id, student_issuance_items(inventory_variants(inventory_items(inventory_categories(name))))')
+      .eq('academic_year_id', academicYearId)
+    if (error) { console.error(error); return [] }
+    return data
+  },
 }
