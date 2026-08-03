@@ -15,7 +15,7 @@ const SUB_TABS = [
 ]
 
 // Phases not yet built — shown as a clear "coming soon" rather than
-// a blank/broken tab, so the full intended menu shape is visible now.
+// a blank/broken tab, so the full intended menu shape is visible now
 function ComingSoon({ phase }) {
   return <EmptyState msg={`This section is planned for ${phase} — not built yet.`} />
 }
